@@ -1,0 +1,78 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net6.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <AssemblyName>AichanToolbox</AssemblyName>
+    <RootNamespace>AichanToolbox</RootNamespace>
+    <ApplicationIcon>Assets\aichan-windows.ico</ApplicationIcon>
+    <Version>7.6.3</Version>
+    <Authors>OpenAI Codex</Authors>
+    <Company>OpenAI Codex</Company>
+    <Product>艾酱图片工具箱</Product>
+    <Description>现代化节点图片工作流工具箱</Description>
+    <IncludeFfmpeg Condition="'$(IncludeFfmpeg)' == ''">false</IncludeFfmpeg>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <PublishTrimmed>false</PublishTrimmed>
+    <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AichanToolbox.EngineSmoke" />
+    <InternalsVisibleTo Include="AichanToolbox.TargetSizeProbe" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
+    <PackageReference Include="NetVips" Version="3.2.0" />
+    <PackageReference Include="NetVips.Native.win-x64" Version="8.18.5" />
+    <PackageReference Include="SharpCompress" Version="0.50.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\aichan-windows.ico" />
+    <Resource Include="Assets\aichan-startup.png" />
+    <Content Include="wwwroot\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="README.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="THIRD-PARTY-NOTICES.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="SharpCompress-LICENSE.txt" Link="tools\SharpCompress-LICENSE.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="$(NuGetPackageRoot)\netvips.native.win-x64\8.18.5\THIRD-PARTY-NOTICES.md" Link="tools\libvips-THIRD-PARTY-NOTICES.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\vendor\ffmpeg\ffmpeg.exe" Link="tools\ffmpeg.exe" Condition="'$(IncludeFfmpeg)' == 'true'">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\vendor\jxl-v0.11.2-win-x64\bin\cjpegli.exe" Link="tools\cjpegli.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\vendor\jxl-v0.11.2-win-x64\bin\LICENSE.*" Link="tools\jpegli-licenses\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <Target Name="RemovePublishedReferenceDocumentation" AfterTargets="Publish">
+    <ItemGroup>
+      <PublishedReferenceDocumentation Include="$(PublishDir)**\*.xml" />
+    </ItemGroup>
+    <Delete Files="@(PublishedReferenceDocumentation)" />
+  </Target>
+
+  <Target Name="RemoveUnusedWebView2WinFormsReference" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Reference.Filename)' == 'Microsoft.Web.WebView2.WinForms'" />
+    </ItemGroup>
+  </Target>
+</Project>
