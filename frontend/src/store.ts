@@ -17,7 +17,7 @@ export const useAppStore = defineStore('app', {
     progress: 0,
     progressTotal: 0,
     status: '准备就绪',
-    version: '7.6.4',
+    version: '8.0.0',
     processorCount: 0
   }),
   getters: {

@@ -8,7 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$runtimePatch = "6.0.36"
+$runtimePatch = "10.0.11"
 $includeFfmpegValue = if ($IncludeFfmpeg) { "true" } else { "false" }
 $publishPath = if ([System.IO.Path]::IsPathRooted($OutputDirectory)) { $OutputDirectory } else { Join-Path $projectRoot $OutputDirectory }
 $env:DOTNET_CLI_HOME = Join-Path $projectRoot ".dotnet_cli"

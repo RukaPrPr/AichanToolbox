@@ -379,6 +379,53 @@ function pointerUp(event: PointerEvent) {
   }
 }
 
+function cancelInteractions(pointerId?: number) {
+  const matches = (candidate: number) => pointerId === undefined || candidate === pointerId
+  if (pointerId === undefined || pendingPointer?.pointerId === pointerId) {
+    pendingPointer = null
+    if (interactionFrame) {
+      cancelAnimationFrame(interactionFrame)
+      interactionFrame = 0
+    }
+  }
+  if (pan && matches(pan.pointerId)) {
+    pan = null
+    surface.value?.classList.remove('is-panning')
+    applyViewport(true)
+  }
+  if (drag && matches(drag.pointerId)) {
+    const cancelled = drag
+    drag = null
+    cancelled.element.classList.remove('is-dragging')
+    cancelled.element.style.setProperty('--node-drag-x', '0px')
+    cancelled.element.style.setProperty('--node-drag-y', '0px')
+    document.body.classList.remove('node-dragging')
+    requestDraw()
+  }
+  if (resizeDrag && matches(resizeDrag.pointerId)) {
+    const cancelled = resizeDrag
+    resizeDrag = null
+    cancelled.element.classList.remove('is-resizing')
+    cancelled.element.style.width = `${cancelled.width}px`
+    cancelled.element.style.height = `${cancelled.height}px`
+    requestDraw()
+  }
+  if (linking && matches(linking.pointerId)) {
+    linking.snap?.classList.remove('snap-target')
+    linking = null
+    document.body.classList.remove('linking')
+    requestDraw()
+  }
+}
+
+function pointerCancel(event: PointerEvent) {
+  cancelInteractions(event.pointerId)
+}
+
+function windowBlur() {
+  cancelInteractions()
+}
+
 function outputDown(node: WorkflowNode, port: PortDefinition, event: PointerEvent) {
   if (store.busy || event.button !== 0 || !surface.value) return
   ensurePortCache()
@@ -490,6 +537,8 @@ watch(() => store.highlightedJobId, requestDraw)
 onMounted(async () => {
   window.addEventListener('pointermove', pointerMove)
   window.addEventListener('pointerup', pointerUp)
+  window.addEventListener('pointercancel', pointerCancel)
+  window.addEventListener('blur', windowBlur)
   window.addEventListener('keydown', keyDown)
   if (surface.value) lastSurfaceSize = { width: surface.value.clientWidth, height: surface.value.clientHeight }
   resizeObserver = new ResizeObserver(surfaceResized)
@@ -505,7 +554,10 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('pointermove', pointerMove)
   window.removeEventListener('pointerup', pointerUp)
+  window.removeEventListener('pointercancel', pointerCancel)
+  window.removeEventListener('blur', windowBlur)
   window.removeEventListener('keydown', keyDown)
+  cancelInteractions()
   resizeObserver?.disconnect()
   lastSurfaceSize = null
   if (drawFrame) cancelAnimationFrame(drawFrame)

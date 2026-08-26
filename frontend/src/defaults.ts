@@ -10,7 +10,7 @@ export const nodeMeta: Record<NodeType, { title: string; accent: string; width: 
   Resize: { title: '按比例缩放', accent: '#66c8ff', width: 290, height: 260 },
   Descreen: { title: '逆网点化', accent: '#52bfa8', width: 300, height: 275 },
   Quality: { title: 'JPG 画质压缩', accent: '#f58cff', width: 290, height: 260 },
-  TargetSize: { title: '目标体积压缩', accent: '#718cf0', width: 320, height: 335 },
+  TargetSize: { title: '目标体积压缩', accent: '#718cf0', width: 320, height: 380 },
   Output: { title: '保存输出', accent: '#7ee787', width: 320, height: 300 },
   ZipPack: { title: 'ZIP 压缩', accent: '#7c8cf2', width: 340, height: 400 },
   DeleteExtracted: { title: '删除解压目录', accent: '#e8738a', width: 320, height: 320 }
@@ -26,6 +26,7 @@ export function createSettings(type: NodeType): NodeSettings {
     targetStartQuality: 90,
     targetQualitySpan: 5,
     targetMinimumQuality: 50,
+    targetKeepSmallestOnUnmet: false,
     descreenLevel: 2,
     widthEnabled: true,
     heightEnabled: true,
@@ -71,6 +72,10 @@ export function outputPorts(type: NodeType): PortDefinition[] {
     case 'ResolutionFilter': return [
       { id: 'match', label: '符合', color: '#52d6a5', kind: 'image' },
       { id: 'else', label: '不符合', color: '#ffae62', kind: 'image' }
+    ]
+    case 'TargetSize': return [
+      { id: 'out', label: '达标', color: '#52d6a5', kind: 'image' },
+      { id: 'unmet', label: '未达标', color: '#ffae62', kind: 'image' }
     ]
     case 'Output': return [{ id: 'batch', label: '文件批次', color: '#7ee787', kind: 'batch' }]
     case 'ZipPack': return [{ id: 'batch', label: '文件批次', color: '#7c8cf2', kind: 'batch' }]

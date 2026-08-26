@@ -2,6 +2,8 @@ namespace AichanToolbox.Core;
 
 internal sealed class WorkflowRunner
 {
+    private sealed record TargetSizeApplication(bool MetTarget, string? UnmetMessage);
+
     private readonly ImageEngine _engine;
     private readonly TargetSizeOptimizer _targetSizeOptimizer;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, System.Collections.Concurrent.ConcurrentQueue<int>> _targetSizeHistory = new(StringComparer.Ordinal);
@@ -65,6 +67,7 @@ internal sealed class WorkflowRunner
             }
 
             string nextPort;
+            string? unconnectedMessage = null;
             switch (node.Type)
             {
                 case "FormatFilter":
@@ -94,8 +97,9 @@ internal sealed class WorkflowRunner
                     nextPort = "out";
                     break;
                 case "TargetSize":
-                    await ApplyTargetSizeAsync(state, node, cancellationToken).ConfigureAwait(false);
-                    nextPort = "out";
+                    var targetSize = await ApplyTargetSizeAsync(state, node, cancellationToken).ConfigureAwait(false);
+                    nextPort = targetSize.MetTarget ? "out" : "unmet";
+                    unconnectedMessage = targetSize.UnmetMessage;
                     break;
                 default:
                     throw new InvalidOperationException($"不支持的节点：{node.Title}");
@@ -103,7 +107,11 @@ internal sealed class WorkflowRunner
 
             connection = FindConnection(workflow, node.Id, nextPort);
             if (connection is null)
+            {
+                if (!string.IsNullOrWhiteSpace(unconnectedMessage))
+                    throw new InvalidOperationException(unconnectedMessage + " 请连接“未达标”出口，或先缩小分辨率、降低画质下限。");
                 throw new InvalidOperationException($"节点“{node.Title}”的 {nextPort} 出口没有连接。");
+            }
         }
 
         throw new InvalidOperationException("工作流没有到达保存输出节点。");
@@ -176,67 +184,122 @@ internal sealed class WorkflowRunner
         MarkDirty(state);
     }
 
-    private async Task ApplyTargetSizeAsync(
+    private async Task<TargetSizeApplication> ApplyTargetSizeAsync(
         ExecutionState state,
         WorkflowNode node,
         CancellationToken cancellationToken)
     {
+        var trial = CloneProcessingState(state);
         var settings = node.Data;
         var targetMb = Math.Clamp(settings.TargetSizeMb, 0.01, 1024);
         var targetBytes = Math.Max(1L, (long)Math.Floor(targetMb * 1024d * 1024d));
-        await EnsureMaterializedAsync(state, cancellationToken).ConfigureAwait(false);
-        if (state.TargetExtension is not (".jpg" or ".jpeg"))
-        {
-            state.TargetExtension = ".jpg";
-            state.JpegQuality = 100;
-            MarkDirty(state);
-            await EnsureMaterializedAsync(state, cancellationToken).ConfigureAwait(false);
-        }
-        if (state.Size <= targetBytes) return;
-
-        var historyKey = TargetSizeHistoryKey(node.Id, state, settings, targetBytes);
-        TargetSizeResult result;
         try
         {
-            result = await _targetSizeOptimizer.OptimizeAsync(
-                state.SourcePath,
-                state.Width,
-                state.Height,
+            await EnsureMaterializedAsync(trial, cancellationToken).ConfigureAwait(false);
+            if (trial.TargetExtension is not (".jpg" or ".jpeg"))
+            {
+                trial.TargetExtension = ".jpg";
+                trial.JpegQuality = 100;
+                MarkDirty(trial);
+                await EnsureMaterializedAsync(trial, cancellationToken).ConfigureAwait(false);
+            }
+            if (trial.Size <= targetBytes)
+            {
+                CommitProcessingState(state, trial);
+                return new TargetSizeApplication(true, null);
+            }
+
+            var historyKey = TargetSizeHistoryKey(node.Id, trial, settings, targetBytes);
+            var result = await _targetSizeOptimizer.OptimizeAsync(
+                trial.SourcePath,
+                trial.Width,
+                trial.Height,
                 targetBytes,
                 settings.TargetStartQuality,
                 settings.TargetQualitySpan,
                 settings.TargetMinimumQuality,
                 5,
                 TargetSizeHint(historyKey),
-                state.AutoGrayscale,
-                state.DescreenLevel,
+                trial.AutoGrayscale,
+                trial.DescreenLevel,
                 cancellationToken).ConfigureAwait(false);
+
+            var unmetMessage = result.MetTarget
+                ? null
+                : $"经过 {result.Attempts.Count} 次真实编码，最小结果仍为 {FormatSize(result.Size)}，无法达到 {targetMb:0.##} MB。";
+            if (!result.MetTarget && !settings.TargetKeepSmallestOnUnmet)
+            {
+                TryDelete(result.OutputPath);
+                CleanupTrialState(trial, state);
+                return new TargetSizeApplication(false, unmetMessage);
+            }
+
+            if (!trial.CurrentPath.Equals(trial.SourcePath, StringComparison.OrdinalIgnoreCase) && File.Exists(trial.CurrentPath))
+                trial.TemporaryFiles.Add(trial.CurrentPath);
+            trial.CurrentPath = result.OutputPath;
+            trial.TargetExtension = ".jpg";
+            trial.JpegQuality = result.Quality;
+            trial.Size = result.Size;
+            trial.Transformed = true;
+            trial.RenderVersion++;
+            trial.MaterializedVersion = trial.RenderVersion;
+            CommitProcessingState(state, trial);
+            if (result.MetTarget) RecordTargetSizeQuality(historyKey, result.Quality);
+            return new TargetSizeApplication(result.MetTarget, unmetMessage);
         }
         catch
         {
-            if (!state.CurrentPath.Equals(state.SourcePath, StringComparison.OrdinalIgnoreCase))
-                TryDelete(state.CurrentPath);
+            CleanupTrialState(trial, state);
             throw;
         }
-        if (!result.MetTarget)
-        {
-            TryDelete(result.OutputPath);
-            if (!state.CurrentPath.Equals(state.SourcePath, StringComparison.OrdinalIgnoreCase))
-                TryDelete(state.CurrentPath);
-            throw new InvalidOperationException(
-                $"最低画质 {Math.Clamp(settings.TargetMinimumQuality, 20, 99)}% 编码后仍为 {FormatSize(result.Size)}，无法达到 {targetMb:0.##} MB。请先缩小分辨率或降低画质下限。");
-        }
+    }
 
-        if (!state.CurrentPath.Equals(state.SourcePath, StringComparison.OrdinalIgnoreCase) && File.Exists(state.CurrentPath))
-            state.TemporaryFiles.Add(state.CurrentPath);
-        state.CurrentPath = result.OutputPath;
-        state.TargetExtension = ".jpg";
-        state.JpegQuality = result.Quality;
-        state.Size = result.Size;
-        state.Transformed = true;
-        state.RenderVersion++;
-        state.MaterializedVersion = state.RenderVersion;
-        RecordTargetSizeQuality(historyKey, result.Quality);
+    private static ExecutionState CloneProcessingState(ExecutionState state)
+    {
+        var clone = new ExecutionState
+        {
+            SourcePath = state.SourcePath,
+            CurrentPath = state.CurrentPath,
+            TargetExtension = state.TargetExtension,
+            JpegQuality = state.JpegQuality,
+            AutoGrayscale = state.AutoGrayscale,
+            DescreenLevel = state.DescreenLevel,
+            Transformed = state.Transformed,
+            Width = state.Width,
+            Height = state.Height,
+            Size = state.Size,
+            RenderVersion = state.RenderVersion,
+            MaterializedVersion = state.MaterializedVersion
+        };
+        clone.TemporaryFiles.AddRange(state.TemporaryFiles);
+        return clone;
+    }
+
+    private static void CommitProcessingState(ExecutionState state, ExecutionState trial)
+    {
+        state.CurrentPath = trial.CurrentPath;
+        state.TargetExtension = trial.TargetExtension;
+        state.JpegQuality = trial.JpegQuality;
+        state.AutoGrayscale = trial.AutoGrayscale;
+        state.DescreenLevel = trial.DescreenLevel;
+        state.Transformed = trial.Transformed;
+        state.Width = trial.Width;
+        state.Height = trial.Height;
+        state.Size = trial.Size;
+        state.RenderVersion = trial.RenderVersion;
+        state.MaterializedVersion = trial.MaterializedVersion;
+        state.TemporaryFiles.Clear();
+        state.TemporaryFiles.AddRange(trial.TemporaryFiles.Distinct(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static void CleanupTrialState(ExecutionState trial, ExecutionState original)
+    {
+        var protectedPaths = original.TemporaryFiles
+            .Append(original.SourcePath)
+            .Append(original.CurrentPath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in trial.TemporaryFiles.Append(trial.CurrentPath).Distinct(StringComparer.OrdinalIgnoreCase))
+            if (!protectedPaths.Contains(path)) TryDelete(path);
     }
 
     private static void MarkDirty(ExecutionState state)

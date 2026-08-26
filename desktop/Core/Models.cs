@@ -42,6 +42,7 @@ public sealed class NodeSettings
     public int TargetStartQuality { get; set; } = 90;
     public int TargetQualitySpan { get; set; } = 5;
     public int TargetMinimumQuality { get; set; } = 50;
+    public bool TargetKeepSmallestOnUnmet { get; set; }
     public int DescreenLevel { get; set; } = 2;
     public bool WidthEnabled { get; set; } = true;
     public bool HeightEnabled { get; set; } = true;

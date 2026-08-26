@@ -243,8 +243,10 @@ function parseColor(value: string): readonly [number, number, number] {
 }
 
 function controlDistance(start: ConnectionPoint, end: ConnectionPoint) {
-  const horizontal = end.x - start.x
-  return horizontal >= 0 ? horizontal * .48 : Math.max(72, Math.abs(horizontal) * .48)
+  const horizontal = Math.abs(end.x - start.x)
+  const vertical = Math.abs(end.y - start.y)
+  const verticalAssist = Math.min(72, vertical * .2)
+  return Math.max(horizontal * .48, verticalAssist)
 }
 
 function cubicPoint(start: ConnectionPoint, controlA: ConnectionPoint, controlB: ConnectionPoint, end: ConnectionPoint, t: number) {

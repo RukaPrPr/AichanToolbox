@@ -93,7 +93,7 @@ internal sealed class DesktopBridge : IDisposable
             case "app.startup":
                 return BuildStartupSnapshot(ReadOptionalString(request.Payload, "rememberedProfile"));
             case "app.ready":
-                return new { version = "7.6.4", jobs = _jobs, archives = _archives, processorCount = Environment.ProcessorCount, maximized = _owner.WindowState == WindowState.Maximized };
+                return new { version = "8.0.0", jobs = _jobs, archives = _archives, processorCount = Environment.ProcessorCount, maximized = _owner.WindowState == WindowState.Maximized };
             case "app.frontendReady":
                 StartupTelemetry.SetMetric("frontend.scriptToMounted", ReadOptionalDouble(request.Payload, "scriptToMountedMs"));
                 StartupTelemetry.SetMetric("frontend.scriptToReady", ReadOptionalDouble(request.Payload, "scriptToReadyMs"));
@@ -404,7 +404,7 @@ internal sealed class DesktopBridge : IDisposable
         StartupTelemetry.Mark("profiles.startupSnapshot.complete");
         return new
         {
-            version = "7.6.4",
+            version = "8.0.0",
             jobs = _jobs,
             archives = _archives,
             processorCount = Environment.ProcessorCount,
@@ -1437,12 +1437,22 @@ internal sealed class DesktopBridge : IDisposable
                 continue;
             }
 
-            var nextFormats = node.Type is "ConvertJpg" or "Quality" or "TargetSize"
+            if (node.Type == "TargetSize")
+            {
+                Enqueue("out", ImageFormatSet.Jpg, true);
+                if (node.Data.TargetKeepSmallestOnUnmet)
+                    Enqueue("unmet", ImageFormatSet.Jpg, true);
+                else
+                    Enqueue("unmet", formats, transformed);
+                continue;
+            }
+
+            var nextFormats = node.Type is "ConvertJpg" or "Quality"
                 ? ImageFormatSet.Jpg
                 : formats;
             var nextTransformed = transformed || node.Type switch
             {
-                "ConvertJpg" or "Quality" or "TargetSize" or "Descreen" => true,
+                "ConvertJpg" or "Quality" or "Descreen" => true,
                 "Resize" => Math.Clamp(node.Data.ScalePercent, 20, 100) < 100,
                 _ => false
             };
@@ -1490,6 +1500,7 @@ internal sealed class DesktopBridge : IDisposable
                 .Append(node.Data.ScalePercent).Append(':').Append(node.Data.QualityPercent).Append(':')
                 .Append(node.Data.TargetSizeMb).Append(':').Append(node.Data.TargetStartQuality).Append(':')
                 .Append(node.Data.TargetQualitySpan).Append(':').Append(node.Data.TargetMinimumQuality).Append(':')
+                .Append(node.Data.TargetKeepSmallestOnUnmet).Append(':')
                 .Append(node.Data.DescreenLevel).Append(':')
                 .Append(node.Data.WidthEnabled).Append(':').Append(node.Data.WidthOperator).Append(':').Append(node.Data.WidthValue).Append(':')
                 .Append(node.Data.HeightEnabled).Append(':').Append(node.Data.HeightOperator).Append(':').Append(node.Data.HeightValue).Append(':')

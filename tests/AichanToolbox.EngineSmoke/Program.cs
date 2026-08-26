@@ -143,6 +143,54 @@ try
     Require(targetPassThrough.Transformed, "目标体积节点没有把非 JPG 输入转换为 JPG。");
     Require(Path.GetExtension(targetPassThrough.FinalPath).Equals(".jpg", StringComparison.OrdinalIgnoreCase), "目标体积节点的最终输出不是 JPG。");
 
+    var targetUnmetBytes = (long)Math.Floor(0.01 * 1024 * 1024);
+    var targetSkipWorkflow = TargetUnmetWorkflow(false);
+    DesktopBridge.ValidateWorkflow(targetSkipWorkflow);
+    var targetSkipped = await runner.ExecuteAsync(Job(noisySource, 256, 256), targetSkipWorkflow, CancellationToken.None);
+    var targetSkipConnection = targetSkipWorkflow.Connections.Single(value => value.FromPort == "unmet");
+    Require(!targetSkipped.Transformed, "关闭最小结果开关后，未达标分支仍修改了入口状态。");
+    Require(targetSkipped.FinalPath.Equals(noisySource, StringComparison.OrdinalIgnoreCase), "关闭最小结果开关后，未达标分支没有跳过目标体积节点。");
+    Require(targetSkipped.RouteConnectionIds.Contains(targetSkipConnection.Id), "目标体积未达标分支没有记录 unmet 连线。");
+
+    var targetKeepWorkflow = TargetUnmetWorkflow(true);
+    DesktopBridge.ValidateWorkflow(targetKeepWorkflow);
+    var targetKept = await runner.ExecuteAsync(Job(noisySource, 256, 256), targetKeepWorkflow, CancellationToken.None);
+    Require(targetKept.Transformed, "开启最小结果开关后，未达标分支没有保留编码结果。");
+    Require(Path.GetExtension(targetKept.FinalPath).Equals(".jpg", StringComparison.OrdinalIgnoreCase), "未达标分支保留的最小结果不是 JPG。");
+    Require(targetKept.Size > targetUnmetBytes, "强制未达标测试意外达到了目标体积。");
+    Require(targetKept.Size < new FileInfo(noisySource).Length, "未达标分支没有保留体积最小的真实编码候选。");
+
+    var legacyTargetFailurePreserved = false;
+    try
+    {
+        await runner.ExecuteAsync(
+            Job(noisySource, 256, 256),
+            LinearWorkflow(Node("legacy-target-unmet", "TargetSize", data =>
+            {
+                data.TargetSizeMb = 0.01;
+                data.TargetMinimumQuality = 50;
+            })),
+            CancellationToken.None);
+    }
+    catch (InvalidOperationException exception) when (exception.Message.Contains("未达标", StringComparison.Ordinal))
+    {
+        legacyTargetFailurePreserved = true;
+    }
+    Require(legacyTargetFailurePreserved, "旧工作流未连接未达标出口时没有保留明确失败行为。");
+
+    var fallbackWorkflow = TargetFallbackWorkflow();
+    DesktopBridge.ValidateWorkflow(fallbackWorkflow);
+    var targetFallback = await runner.ExecuteAsync(Job(noisySource, 256, 256), fallbackWorkflow, CancellationToken.None);
+    Require(targetFallback.Width == 128 && targetFallback.Height == 128, "未达标分支没有进入二次按比例缩放。");
+    Require(targetFallback.Size <= targetBytes, "二次缩放后的目标体积节点仍未达标。");
+    Require(targetFallback.RouteConnectionIds.Contains(fallbackWorkflow.Connections.Single(value => value.FromNodeId == "target-unmet" && value.FromPort == "unmet").Id), "二次缩放工作流没有经过未达标出口。");
+
+    var unsafeTargetSkipRejected = false;
+    try { DesktopBridge.ValidateWorkflow(TargetUnmetAfterResizeWorkflow(false)); }
+    catch (InvalidOperationException exception) when (exception.Message.Contains("未生成 JPG", StringComparison.Ordinal)) { unsafeTargetSkipRejected = true; }
+    Require(unsafeTargetSkipRejected, "跳过目标体积节点的未达标分支被错误地视为 JPG 输出。");
+    DesktopBridge.ValidateWorkflow(TargetUnmetAfterResizeWorkflow(true));
+
     var lockedFile = Path.Combine(temporaryRoot, "transient-lock.jpg");
     File.Copy(first.FinalPath, lockedFile);
     var heldStream = new FileStream(lockedFile, FileMode.Open, FileAccess.Read, FileShare.None);
@@ -251,7 +299,7 @@ try
     catch (InvalidDataException) { traversalBlocked = true; }
     Require(traversalBlocked && !File.Exists(Path.Combine(temporaryRoot, "escaped.txt")), "ZIP 路径穿越没有被阻止。");
 
-    Console.WriteLine($"ENGINE_SMOKE_OK first={first.Size}B current-size={exactSize.Size}B target-size={targetSized.Size}B sampling=4:4:4 jpg-path-validation=true jpg-pass-through=true replacement-baseline=true recycle-sta=true archive-replacement-baseline=true zip-store=true zip-cleanup-safe=true zip-slip-blocked=true");
+    Console.WriteLine($"ENGINE_SMOKE_OK first={first.Size}B current-size={exactSize.Size}B target-size={targetSized.Size}B target-unmet-skip=true target-unmet-smallest=true target-unmet-retry=true target-unmet-legacy=true sampling=4:4:4 jpg-path-validation=true jpg-pass-through=true replacement-baseline=true recycle-sta=true archive-replacement-baseline=true zip-store=true zip-cleanup-safe=true zip-slip-blocked=true");
 }
 finally
 {
@@ -352,6 +400,76 @@ static WorkflowDocument ResolutionBranchWorkflow()
             Connection(firstResize, "out", filter),
             Connection(filter, "match", secondResize),
             Connection(secondResize, "out", output)
+        }
+    };
+}
+
+static WorkflowDocument TargetUnmetWorkflow(bool keepSmallest)
+{
+    var import = Node("import", "Import");
+    var target = Node("target-unmet", "TargetSize", data =>
+    {
+        data.TargetSizeMb = 0.01;
+        data.TargetStartQuality = 90;
+        data.TargetQualitySpan = 5;
+        data.TargetMinimumQuality = 50;
+        data.TargetKeepSmallestOnUnmet = keepSmallest;
+    });
+    var output = Node("output", "Output");
+    return new WorkflowDocument
+    {
+        Nodes = new() { import, target, output },
+        Connections = new()
+        {
+            Connection(import, "out", target),
+            Connection(target, "unmet", output)
+        }
+    };
+}
+
+static WorkflowDocument TargetFallbackWorkflow()
+{
+    var import = Node("import", "Import");
+    var firstTarget = Node("target-unmet", "TargetSize", data =>
+    {
+        data.TargetSizeMb = 0.01;
+        data.TargetMinimumQuality = 50;
+        data.TargetKeepSmallestOnUnmet = false;
+    });
+    var resize = Node("target-retry-resize", "Resize", data => data.ScalePercent = 50);
+    var secondTarget = Node("target-retry", "TargetSize", data =>
+    {
+        data.TargetSizeMb = 0.08;
+        data.TargetMinimumQuality = 50;
+    });
+    var output = Node("output", "Output");
+    return new WorkflowDocument
+    {
+        Nodes = new() { import, firstTarget, resize, secondTarget, output },
+        Connections = new()
+        {
+            Connection(import, "out", firstTarget),
+            Connection(firstTarget, "unmet", resize),
+            Connection(resize, "out", secondTarget),
+            Connection(secondTarget, "out", output)
+        }
+    };
+}
+
+static WorkflowDocument TargetUnmetAfterResizeWorkflow(bool keepSmallest)
+{
+    var import = Node("import", "Import");
+    var resize = Node("resize", "Resize", data => data.ScalePercent = 80);
+    var target = Node("target-unmet", "TargetSize", data => data.TargetKeepSmallestOnUnmet = keepSmallest);
+    var output = Node("output", "Output");
+    return new WorkflowDocument
+    {
+        Nodes = new() { import, resize, target, output },
+        Connections = new()
+        {
+            Connection(import, "out", resize),
+            Connection(resize, "out", target),
+            Connection(target, "unmet", output)
         }
     };
 }

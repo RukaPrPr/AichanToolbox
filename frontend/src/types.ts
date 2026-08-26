@@ -22,6 +22,7 @@ export interface NodeSettings {
   targetStartQuality: number
   targetQualitySpan: number
   targetMinimumQuality: number
+  targetKeepSmallestOnUnmet: boolean
   descreenLevel: number
   widthEnabled: boolean
   heightEnabled: boolean

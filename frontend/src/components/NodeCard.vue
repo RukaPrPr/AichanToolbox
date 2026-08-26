@@ -305,7 +305,8 @@ function descreenRangeStyle(value: number) {
           <label><span>画质下限</span><NumberField v-model="node.data.targetMinimumQuality" :min="20" :max="Math.max(20, node.data.targetStartQuality)" :disabled="busy" label="画质下限" /></label>
         </div>
         <div class="target-derived"><span>动态预测</span><i />最多 5 次真实编码</div>
-        <p class="node-hint">入口超过目标时，从同一工作底图预测并验证，最终输出 JPG；不会在已压缩结果上再次压缩。</p>
+        <label class="switch-line target-result-toggle"><input v-model="node.data.targetKeepSmallestOnUnmet" type="checkbox" /><span>未达标时输出最小结果</span></label>
+        <p class="node-hint">达标出口输出 JPG；关闭开关时，未达标出口会丢弃尝试结果并跳过本节点。</p>
       </template>
 
       <template v-else-if="node.type === 'Output'">
