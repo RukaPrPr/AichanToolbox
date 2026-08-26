@@ -156,8 +156,8 @@ function descreenRangeStyle(value: number) {
     :style="{
       width: `${node.width || meta.width}px`,
       height: `${node.height || meta.height}px`,
-      left: `${node.x}px`,
-      top: `${node.y}px`,
+      '--node-x': `${node.x}px`,
+      '--node-y': `${node.y}px`,
       '--node-accent': meta.accent
     }"
     :data-node-id="node.id"

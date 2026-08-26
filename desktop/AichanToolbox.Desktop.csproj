@@ -9,7 +9,7 @@
     <AssemblyName>AichanToolbox</AssemblyName>
     <RootNamespace>AichanToolbox</RootNamespace>
     <ApplicationIcon>Assets\aichan-windows.ico</ApplicationIcon>
-    <Version>7.6.3</Version>
+    <Version>7.6.4</Version>
     <Authors>OpenAI Codex</Authors>
     <Company>OpenAI Codex</Company>
     <Product>艾酱图片工具箱</Product>

@@ -29,10 +29,11 @@ let portCacheDirty = true
 let connectionRenderer: WebGlConnectionRenderer | null = null
 const portCache = new Map<string, CachedPort>()
 let pan: { pointerId: number; clientX: number; clientY: number; x: number; y: number } | null = null
-let drag: { node: WorkflowNode; element: HTMLElement; pointerId: number; clientX: number; clientY: number; x: number; y: number; nextX: number; nextY: number } | null = null
+let drag: { node: WorkflowNode; element: HTMLElement; pointerId: number; clientX: number; clientY: number; x: number; y: number; nextX: number; nextY: number; activated: boolean } | null = null
 let resizeDrag: { node: WorkflowNode; element: HTMLElement; pointerId: number; clientX: number; clientY: number; width: number; height: number; nextWidth: number; nextHeight: number } | null = null
 let linking: { node: WorkflowNode; port: PortDefinition; pointerId: number; x: number; y: number; snap: HTMLElement | null } | null = null
 const snapRadius = 46
+const dragActivationDistanceSquared = 9
 
 function applyViewport(commit = false) {
   if (!pane.value || !surface.value) return
@@ -226,11 +227,9 @@ function headerDown(node: WorkflowNode, event: PointerEvent) {
     x: node.x,
     y: node.y,
     nextX: node.x,
-    nextY: node.y
+    nextY: node.y,
+    activated: false
   }
-  element.classList.add('is-dragging')
-  document.body.classList.add('node-dragging')
-  requestDraw()
 }
 
 function resizeDown(node: WorkflowNode, event: PointerEvent) {
@@ -275,10 +274,20 @@ function flushPointerMove() {
     geometryChanged = true
   }
   if (drag && event.pointerId === drag.pointerId) {
-    drag.nextX = drag.x + (event.clientX - drag.clientX) / viewport.zoom
-    drag.nextY = drag.y + (event.clientY - drag.clientY) / viewport.zoom
-    drag.element.style.transform = `translate3d(${drag.nextX - drag.x}px, ${drag.nextY - drag.y}px, 0)`
-    geometryChanged = true
+    const clientDeltaX = event.clientX - drag.clientX
+    const clientDeltaY = event.clientY - drag.clientY
+    if (!drag.activated && clientDeltaX * clientDeltaX + clientDeltaY * clientDeltaY >= dragActivationDistanceSquared) {
+      drag.activated = true
+      drag.element.classList.add('is-dragging')
+      document.body.classList.add('node-dragging')
+    }
+    if (drag.activated) {
+      drag.nextX = drag.x + clientDeltaX / viewport.zoom
+      drag.nextY = drag.y + clientDeltaY / viewport.zoom
+      drag.element.style.setProperty('--node-drag-x', `${drag.nextX - drag.x}px`)
+      drag.element.style.setProperty('--node-drag-y', `${drag.nextY - drag.y}px`)
+      geometryChanged = true
+    }
   }
   if (resizeDrag && event.pointerId === resizeDrag.pointerId) {
     resizeDrag.nextWidth = Math.min(1120, Math.max(570, resizeDrag.width + (event.clientX - resizeDrag.clientX) / viewport.zoom))
@@ -321,17 +330,22 @@ function pointerUp(event: PointerEvent) {
   }
   if (drag && event.pointerId === drag.pointerId) {
     const completed = drag
-    const deltaX = completed.nextX - completed.x
-    const deltaY = completed.nextY - completed.y
-    shiftNodePorts(completed.node.id, deltaX, deltaY)
-    completed.element.classList.remove('is-dragging')
-    document.body.classList.remove('node-dragging')
     drag = null
-    completed.element.style.transform = ''
-    completed.element.style.left = `${Math.round(completed.nextX)}px`
-    completed.element.style.top = `${Math.round(completed.nextY)}px`
-    store.updateNodePosition(completed.node.id, Math.round(completed.nextX), Math.round(completed.nextY))
-    requestDraw()
+    if (completed.activated) {
+      const finalX = Math.round(completed.nextX)
+      const finalY = Math.round(completed.nextY)
+      const deltaX = finalX - completed.x
+      const deltaY = finalY - completed.y
+      shiftNodePorts(completed.node.id, deltaX, deltaY)
+      completed.element.classList.remove('is-dragging')
+      document.body.classList.remove('node-dragging')
+      completed.element.style.setProperty('--node-x', `${finalX}px`)
+      completed.element.style.setProperty('--node-y', `${finalY}px`)
+      completed.element.style.setProperty('--node-drag-x', '0px')
+      completed.element.style.setProperty('--node-drag-y', '0px')
+      store.updateNodePosition(completed.node.id, finalX, finalY)
+      requestDraw()
+    }
   }
   if (resizeDrag && event.pointerId === resizeDrag.pointerId) {
     const completed = resizeDrag

@@ -161,17 +161,19 @@ button:disabled { opacity: .42; cursor: default !important; }
 .empty-orbit { position: relative; width: 74px; height: 74px; margin: auto; border: 1px solid rgba(113,150,219,.22); border-radius: 50%; }.empty-orbit::before { content:""; position:absolute; inset:17px; border:1px solid rgba(163,111,222,.28); border-radius:50%; }.empty-orbit i { position:absolute; width:7px; height:7px; border-radius:50%; background:#769fff; box-shadow:0 0 12px #769fff; }.empty-orbit i:nth-child(1){left:4px;top:31px}.empty-orbit i:nth-child(2){right:13px;top:10px;background:#c47fff}.empty-orbit i:nth-child(3){right:10px;bottom:12px;background:#5fd4bc}
 
 .workflow-node {
-  position: absolute; z-index: 5; display: flex; flex-direction: column; min-width: 240px; min-height: 150px;
+  --node-x: 0px; --node-y: 0px; --node-drag-x: 0px; --node-drag-y: 0px;
+  position: absolute; z-index: 5; left: 0; top: 0; display: flex; flex-direction: column; min-width: 240px; min-height: 150px;
   border: 1px solid rgba(158, 181, 222, .18); border-radius: 16px; overflow: visible; pointer-events: auto;
   background: linear-gradient(145deg, rgba(48, 57, 76, .94), rgba(27, 33, 47, .94) 64%, rgba(25,30,43,.96));
   box-shadow: inset 0 1px rgba(255,255,255,.07), inset 0 0 0 1px rgba(255,255,255,.018), 0 16px 34px rgba(0,0,0,.28), 0 2px 8px rgba(0,0,0,.22);
+  transform: translate3d(calc(var(--node-x) + var(--node-drag-x)), calc(var(--node-y) + var(--node-drag-y)), 0);
   cursor: default; contain: layout style;
 }
 .workflow-node::before { content:""; position:absolute; z-index:-1; inset:-1px; border-radius:16px; background: radial-gradient(circle at 15% -20%, color-mix(in srgb, var(--node-accent) 18%, transparent), transparent 42%); pointer-events:none; }
 .workflow-node.route-highlighted { z-index:14; border-color:color-mix(in srgb,var(--node-accent) 86%,white 14%); box-shadow:inset 0 1px rgba(255,255,255,.13),0 0 0 2px color-mix(in srgb,var(--node-accent) 43%,transparent),0 0 32px color-mix(in srgb,var(--node-accent) 35%,transparent),0 18px 42px rgba(0,0,0,.34); }
 .workflow-node.selected { z-index:15; border-color: color-mix(in srgb, var(--node-accent) 70%, white 8%); box-shadow: inset 0 1px rgba(255,255,255,.1), 0 0 0 1px color-mix(in srgb, var(--node-accent) 27%, transparent), 0 17px 39px rgba(0,0,0,.32), 0 0 26px color-mix(in srgb, var(--node-accent) 13%, transparent); }
 .workflow-node.route-highlighted.selected { z-index:15; border-color:color-mix(in srgb,var(--node-accent) 90%,white 16%); box-shadow:inset 0 1px rgba(255,255,255,.14),0 0 0 2px color-mix(in srgb,var(--node-accent) 48%,transparent),0 0 34px color-mix(in srgb,var(--node-accent) 38%,transparent),0 18px 42px rgba(0,0,0,.35); }
-.workflow-node.is-dragging { z-index: 20; will-change: transform; box-shadow: inset 0 1px rgba(255,255,255,.12), 0 24px 55px rgba(0,0,0,.38), 0 0 31px color-mix(in srgb, var(--node-accent) 17%, transparent); }
+.workflow-node.is-dragging { z-index: 20; box-shadow: inset 0 1px rgba(255,255,255,.12), 0 24px 55px rgba(0,0,0,.38), 0 0 31px color-mix(in srgb, var(--node-accent) 17%, transparent); }
 .workflow-node.resizable { min-width: 570px; min-height: 290px; max-width: 1120px; max-height: 700px; overflow: visible; }
 .node-convertjpg{min-height:230px}.node-resize,.node-quality{min-height:260px}.node-descreen{min-height:275px}.node-targetsize{min-height:335px}.node-sizefilter{min-height:210px}.node-resolutionfilter{min-height:270px}.node-formatfilter{min-height:220px}.node-output{min-height:300px}.node-zippack{min-height:400px}.node-deleteextracted{min-height:320px}
 .node-header { position: relative; z-index: 3; display: flex; align-items: center; flex: none; height: 57px; padding: 0 12px 0 11px; border-bottom: 1px solid rgba(173,193,226,.11); border-radius: 15px 15px 0 0; cursor: grab; background: linear-gradient(180deg, rgba(66,76,99,.55), rgba(52,61,81,.33)); }
