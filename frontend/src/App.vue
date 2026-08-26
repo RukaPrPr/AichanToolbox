@@ -14,6 +14,7 @@ const props = defineProps<{
   startupError: string
   startupRequestMs: number
   scriptStartedAt: number
+  htmlStartedAt: number
 }>()
 const store = useAppStore()
 const toast = ref<{ text: string; error: boolean } | null>(null)
@@ -473,10 +474,40 @@ onMounted(async () => {
   await waitForPaint()
   await waitForPaint()
   try {
+    const readyAt = performance.now()
+    const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
+    const resources = performance.getEntriesByType('resource') as PerformanceResourceTiming[]
+    const appScript = resources.find(entry => entry.name.endsWith('/assets/app.js'))
+    const stylesheet = resources.find(entry => entry.name.endsWith('/styles.css'))
+    const paints = performance.getEntriesByType('paint')
+    const firstPaint = paints.find(entry => entry.name === 'first-paint')
+    const firstContentfulPaint = paints.find(entry => entry.name === 'first-contentful-paint')
+    const metrics: Record<string, number> = {
+      navigationToScript: props.scriptStartedAt,
+      htmlToScript: Math.max(0, props.scriptStartedAt - props.htmlStartedAt),
+      scriptToMounted: mountedAt - props.scriptStartedAt,
+      scriptToReady: readyAt - props.scriptStartedAt,
+      startupRequest: props.startupRequestMs
+    }
+    const addMetric = (name: string, value: number | undefined) => {
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 0) metrics[name] = value
+    }
+    addMetric('navigationResponseEnd', navigation?.responseEnd)
+    addMetric('domInteractive', navigation?.domInteractive)
+    addMetric('domContentLoaded', navigation?.domContentLoadedEventEnd)
+    addMetric('loadEventEnd', navigation?.loadEventEnd)
+    addMetric('firstPaint', firstPaint?.startTime)
+    addMetric('firstContentfulPaint', firstContentfulPaint?.startTime)
+    addMetric('appScriptDuration', appScript?.duration)
+    addMetric('appScriptResponseEnd', appScript?.responseEnd)
+    addMetric('appScriptTransferBytes', appScript?.transferSize)
+    addMetric('appScriptEncodedBytes', appScript?.encodedBodySize)
+    addMetric('stylesheetDuration', stylesheet?.duration)
+    addMetric('stylesheetResponseEnd', stylesheet?.responseEnd)
+    addMetric('stylesheetTransferBytes', stylesheet?.transferSize)
+    addMetric('stylesheetEncodedBytes', stylesheet?.encodedBodySize)
     await callHost('app.frontendReady', {
-      scriptToMountedMs: mountedAt - props.scriptStartedAt,
-      scriptToReadyMs: performance.now() - props.scriptStartedAt,
-      startupRequestMs: props.startupRequestMs
+      metrics
     })
   } catch { /* Browser preview has no native startup layer. */ }
 })

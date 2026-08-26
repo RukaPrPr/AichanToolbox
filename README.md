@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-8.0.0-7774d8?style=flat-square" alt="Version 8.0.0">
+  <img src="https://img.shields.io/badge/version-8.0.1-7774d8?style=flat-square" alt="Version 8.0.1">
   <img src="https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet" alt=".NET 10">
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4?style=flat-square&logo=windows11" alt="Windows x64">
   <img src="https://img.shields.io/badge/Vue-3.5-42B883?style=flat-square&logo=vuedotjs" alt="Vue 3.5">
@@ -28,14 +28,14 @@
 
 桌面端由 C#、WPF 与标准 WebView2 承载，界面使用 Vue 3 和 TypeScript；图片处理以 libvips 为核心，JPEG 由 Jpegli 进行 4:4:4 高画质编码。工作流会延迟生成中间文件，尽量从同一工作底图直接得到最终结果，避免不必要的重复解码和代际压缩。
 
-## 8.0.0 更新重点
+## 8.0.1 更新重点
 
-- 全面迁移到 `.NET 10`：开发基线为 `net10.0-windows`，SDK 固定为 `10.0.400`，便携版内置 .NET Desktop Runtime `10.0.11`。
-- “目标体积压缩”增加“达标”和“未达标”双出口；最多 5 次真实编码后，可以选择输出最小候选，或完整回退到节点入口状态后继续补救流程。
-- 节点从挂载、选中、拖动到松开始终使用同一条 `translate3d` 渲染路径，解决低缩放比例下文字闪烁和粗细变化。
-- 节点标题栏与画布统一使用高清矢量张手/握手光标；拖动经过其他控件时不会切回系统光标。
-- 连接线控制点改为连续函数，端点跨越垂直位置时不再突然改变曲线形状。
-- 补充目标体积分流、旧工作流兼容、JPG 路径校验及二次缩放重试的引擎冒烟测试。
+- 启动窗会在主窗口和 WebView2 初始化前先完成首帧显示，避免冷启动期间长时间黑屏。
+- 启动窗移除实时阴影，改用静态光晕；Logo 动画限制为 30 FPS，退出淡出缩短至 110ms。
+- 生产前端启用 Terser，并关闭未使用的 Vue Options API；`app.js` 从约 460 KB 降至约 161 KB。
+- 启动遥测细分 HTML、脚本、样式、Vue 挂载、首帧、配置快照和 WebView2 阶段，方便继续定位冷启动瓶颈。
+- 画布与节点标题栏换用无星星的艾酱主题 `28×28px` 透明光标，重新校准箭头热点并优化小尺寸抗锯齿。
+- 前端构建前会安全清理旧的 `wwwroot`，防止过期光标或静态资源混入发布包。
 
 完整安装包与更新说明见 [GitHub Releases](https://github.com/RukaPrPr/AichanToolbox/releases)。
 
@@ -129,8 +129,9 @@ ZIP 解压 → 导入 / 文件列表 → 图片处理与分支 → 保存输出 
 - 连接线由固定视口 WebGL 图层绘制，DOM 节点和连接线共享坐标矩阵；缩放、平移和拖动时保留完整彩色光晕。
 - 端口坐标在拖动开始时缓存，拖动期间不逐帧读取所有节点布局。
 - 窗口宽度小于 1180px 时，左侧节点库会变成顶部毛玻璃抽屉；跨断点使用 FLIP 动画并保持画布中心。
-- 启动时先一次性加载版本、配置、文件与工作流快照；图片引擎和历史缓存清理由后台延迟初始化，减少启动阻塞。
-- 自定义矢量光标、WebGL 曲线和节点合成路径均适配 Windows 高 DPI 与画布 30%—200% 缩放。
+- 启动时先显示轻量 WPF 启动画面，再创建主窗口与 WebView2；版本、配置、文件与工作流使用一次启动快照，图片引擎和历史缓存清理由后台延迟初始化。
+- 生产前端使用 Terser 压缩并关闭未使用的 Vue Options API；启动日志会细分 HTML、脚本资源、模块执行、首帧、配置快照和 WebView2 各阶段。
+- 自定义透明光标、WebGL 曲线和节点合成路径均适配 Windows 高 DPI 与画布 30%—200% 缩放。
 
 ## 技术架构
 

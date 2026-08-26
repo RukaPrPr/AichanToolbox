@@ -93,11 +93,9 @@ internal sealed class DesktopBridge : IDisposable
             case "app.startup":
                 return BuildStartupSnapshot(ReadOptionalString(request.Payload, "rememberedProfile"));
             case "app.ready":
-                return new { version = "8.0.0", jobs = _jobs, archives = _archives, processorCount = Environment.ProcessorCount, maximized = _owner.WindowState == WindowState.Maximized };
+                return new { version = "8.0.1", jobs = _jobs, archives = _archives, processorCount = Environment.ProcessorCount, maximized = _owner.WindowState == WindowState.Maximized };
             case "app.frontendReady":
-                StartupTelemetry.SetMetric("frontend.scriptToMounted", ReadOptionalDouble(request.Payload, "scriptToMountedMs"));
-                StartupTelemetry.SetMetric("frontend.scriptToReady", ReadOptionalDouble(request.Payload, "scriptToReadyMs"));
-                StartupTelemetry.SetMetric("frontend.startupRequest", ReadOptionalDouble(request.Payload, "startupRequestMs"));
+                CaptureFrontendStartupMetrics(request.Payload);
                 _appReady();
                 return null;
             case "window.drag":
@@ -404,7 +402,7 @@ internal sealed class DesktopBridge : IDisposable
         StartupTelemetry.Mark("profiles.startupSnapshot.complete");
         return new
         {
-            version = "8.0.0",
+            version = "8.0.1",
             jobs = _jobs,
             archives = _archives,
             processorCount = Environment.ProcessorCount,
@@ -1624,8 +1622,23 @@ internal sealed class DesktopBridge : IDisposable
         => payload.TryGetProperty(name, out var value) ? value.GetString() ?? "" : "";
     private static string? ReadOptionalString(JsonElement payload, string name)
         => payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty(name, out var value) ? value.GetString() : null;
-    private static double ReadOptionalDouble(JsonElement payload, string name)
-        => payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty(name, out var value) && value.TryGetDouble(out var number) ? number : 0;
+
+    private static void CaptureFrontendStartupMetrics(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object ||
+            !payload.TryGetProperty("metrics", out var metrics) ||
+            metrics.ValueKind != JsonValueKind.Object)
+            return;
+
+        foreach (var metric in metrics.EnumerateObject())
+        {
+            if (metric.Name.Length is < 1 or > 64 ||
+                metric.Name.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not '.' and not '_' and not '-'))
+                continue;
+            if (metric.Value.TryGetDouble(out var value) && double.IsFinite(value) && value >= 0)
+                StartupTelemetry.SetMetric($"frontend.{metric.Name}", value);
+        }
+    }
     private static bool ReadBoolean(JsonElement payload, string name)
         => payload.TryGetProperty(name, out var value) && value.GetBoolean();
     private static string[] ReadStringArray(JsonElement payload, string name)

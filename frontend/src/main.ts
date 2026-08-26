@@ -7,6 +7,9 @@ import type { StartupSnapshot } from './types'
 import './styles.css'
 
 const scriptStartedAt = performance.now()
+const htmlStartedAt = Number((window as Window & {
+  __AICHAN_BOOT__?: { htmlStartedAt?: number }
+}).__AICHAN_BOOT__?.htmlStartedAt ?? 0)
 const profileStorageKey = 'aichan:last-workflow-profile'
 const pinia = createPinia()
 let startup: StartupSnapshot | null = null
@@ -28,6 +31,6 @@ try {
 }
 
 const startupRequestMs = performance.now() - requestStartedAt
-const app = createApp(App, { startup, startupError, startupRequestMs, scriptStartedAt })
+const app = createApp(App, { startup, startupError, startupRequestMs, scriptStartedAt, htmlStartedAt })
 app.use(pinia)
 app.mount('#app')

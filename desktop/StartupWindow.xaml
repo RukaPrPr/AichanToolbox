@@ -7,34 +7,42 @@
         ResizeMode="NoResize"
         ShowInTaskbar="False"
         ShowActivated="False"
-        Background="#EEF1F4">
+        Topmost="True"
+        WindowStartupLocation="Manual"
+        UseLayoutRounding="True"
+        Background="#F2F4F7">
     <WindowChrome.WindowChrome>
         <WindowChrome CaptionHeight="0" ResizeBorderThickness="0" CornerRadius="0" GlassFrameThickness="0" />
     </WindowChrome.WindowChrome>
-    <Grid x:Name="StartupSurface">
-        <Grid.Background>
-            <RadialGradientBrush Center="0.5,0.42" GradientOrigin="0.5,0.42" RadiusX="0.72" RadiusY="0.72">
-                <GradientStop Color="#FFFDFEFF" Offset="0" />
-                <GradientStop Color="#FFF4F3FA" Offset="0.48" />
-                <GradientStop Color="#FFEEF1F4" Offset="1" />
-            </RadialGradientBrush>
-        </Grid.Background>
-        <Border x:Name="StartupLogo" Width="94" Height="94" CornerRadius="47" BorderThickness="0"
-                Background="Transparent" Opacity="0.72" SnapsToDevicePixels="True">
-            <Border.Effect>
-                <DropShadowEffect Color="#6A6673" BlurRadius="22" ShadowDepth="0" Opacity="0.2" />
-            </Border.Effect>
-            <Image Width="92" Height="92" Source="Assets/aichan-startup.png" Stretch="Uniform"
-                   SnapsToDevicePixels="True" RenderOptions.BitmapScalingMode="HighQuality" />
-            <Border.Triggers>
-                <EventTrigger RoutedEvent="FrameworkElement.Loaded">
-                    <BeginStoryboard>
-                        <Storyboard RepeatBehavior="Forever" AutoReverse="True">
-                            <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0.68" To="1" Duration="0:0:0.52" />
-                        </Storyboard>
-                    </BeginStoryboard>
-                </EventTrigger>
-            </Border.Triggers>
-        </Border>
+    <Grid x:Name="StartupSurface" Background="#F2F4F7">
+        <Grid Width="126" Height="126" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <Ellipse Width="126" Height="126" IsHitTestVisible="False">
+                <Ellipse.Fill>
+                    <RadialGradientBrush>
+                        <GradientStop Color="#356A6673" Offset="0" />
+                        <GradientStop Color="#126A6673" Offset="0.58" />
+                        <GradientStop Color="#006A6673" Offset="1" />
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+            </Ellipse>
+            <Border x:Name="StartupLogo" Width="94" Height="94" CornerRadius="47" BorderThickness="0"
+                    Background="Transparent" Opacity="0.72" SnapsToDevicePixels="True">
+                <Border.CacheMode>
+                    <BitmapCache RenderAtScale="1" />
+                </Border.CacheMode>
+                <Image Width="92" Height="92" Source="Assets/aichan-startup.png" Stretch="Uniform"
+                       SnapsToDevicePixels="True" RenderOptions.BitmapScalingMode="HighQuality" />
+                <Border.Triggers>
+                    <EventTrigger RoutedEvent="FrameworkElement.Loaded">
+                        <BeginStoryboard>
+                            <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0.68" To="1"
+                                                 Duration="0:0:0.52" Timeline.DesiredFrameRate="30" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </EventTrigger>
+                </Border.Triggers>
+            </Border>
+        </Grid>
     </Grid>
 </Window>

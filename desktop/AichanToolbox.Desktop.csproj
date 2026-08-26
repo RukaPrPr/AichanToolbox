@@ -9,7 +9,7 @@
     <AssemblyName>AichanToolbox</AssemblyName>
     <RootNamespace>AichanToolbox</RootNamespace>
     <ApplicationIcon>Assets\aichan-windows.ico</ApplicationIcon>
-    <Version>8.0.0</Version>
+    <Version>8.0.1</Version>
     <Authors>OpenAI Codex</Authors>
     <Company>OpenAI Codex</Company>
     <Product>艾酱图片工具箱</Product>
@@ -20,7 +20,6 @@
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
-    <PublishReadyToRun>false</PublishReadyToRun>
     <PublishTrimmed>false</PublishTrimmed>
     <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
   </PropertyGroup>
