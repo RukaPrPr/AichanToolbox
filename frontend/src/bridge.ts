@@ -63,11 +63,11 @@ export function onHostEvent(eventName: string, handler: EventHandler) {
 
 async function mockCall(command: string, payload: unknown) {
   if (command === 'app.startup') return {
-    version: '8.0.1-dev', processorCount: 16, jobs: [], archives: [], maximized: false,
+    version: '8.0.2-dev', processorCount: 16, jobs: [], archives: [], maximized: false,
     profiles: Array.from(mockProfiles.keys()).sort((a, b) => a.localeCompare(b, 'zh-CN')),
     selectedProfile: '', workflow: null
   }
-  if (command === 'app.ready') return { version: '8.0.1-dev', processorCount: 16, jobs: [], archives: [], maximized: false }
+  if (command === 'app.ready') return { version: '8.0.2-dev', processorCount: 16, jobs: [], archives: [], maximized: false }
   if (command === 'app.frontendReady') return null
   if (command === 'window.maximize') return { maximized: false }
   if (command.startsWith('window.')) return null

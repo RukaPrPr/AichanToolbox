@@ -4,6 +4,7 @@ import { callHost, importDroppedFiles, onHostEvent } from './bridge'
 import { actionDialog, requestAction, requestNotice, resolveAction } from './confirm'
 import { nodeMeta } from './defaults'
 import { useAppStore } from './store'
+import { waitForStartupPaint } from './startup'
 import type { ArchiveJob, FileJob, NodeType, ReplacedArchiveConfirmation, ReplacedSourceConfirmation, StartupSnapshot, WorkflowDocument } from './types'
 import GlassSelect from './components/GlassSelect.vue'
 import NodeGlyph from './components/NodeGlyph.vue'
@@ -466,13 +467,7 @@ onMounted(async () => {
   }
   if (props.startupError) showError(new Error(props.startupError))
   await nextTick()
-  try { await document.fonts.ready } catch { /* The UI can still render with system fallbacks. */ }
-  const waitForPaint = () => Promise.race<void>([
-    new Promise<void>(resolve => window.requestAnimationFrame(() => resolve())),
-    new Promise<void>(resolve => window.setTimeout(resolve, 80))
-  ])
-  await waitForPaint()
-  await waitForPaint()
+  await waitForStartupPaint()
   try {
     const readyAt = performance.now()
     const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined

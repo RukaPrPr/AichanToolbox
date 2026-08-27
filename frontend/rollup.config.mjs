@@ -4,6 +4,7 @@ import ts from 'typescript'
 import vue from 'rollup-plugin-vue'
 import { nodeResolve } from '@rollup/plugin-node-resolve'
 import terser from '@rollup/plugin-terser'
+import { buildProductionHtml } from './build/html.mjs'
 
 const outputRoot = path.resolve('../desktop/wwwroot')
 
@@ -70,7 +71,7 @@ function staticAssets() {
       this.emitFile({
         type: 'asset',
         fileName: 'index.html',
-        source: '<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>艾酱图片工具箱</title><script>window.__AICHAN_BOOT__={htmlStartedAt:performance.now()}</script><link rel="stylesheet" href="./styles.css"></head><body><div id="app"></div><script type="module" src="./assets/app.js"></script></body></html>'
+        source: buildProductionHtml(fs.readFileSync(path.resolve('index.html'), 'utf8'))
       })
     }
   }

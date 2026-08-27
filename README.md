@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-8.0.1-7774d8?style=flat-square" alt="Version 8.0.1">
+  <img src="https://img.shields.io/badge/version-8.0.2-7774d8?style=flat-square" alt="Version 8.0.2">
   <img src="https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet" alt=".NET 10">
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4?style=flat-square&logo=windows11" alt="Windows x64">
   <img src="https://img.shields.io/badge/Vue-3.5-42B883?style=flat-square&logo=vuedotjs" alt="Vue 3.5">
@@ -28,16 +28,15 @@
 
 桌面端由 C#、WPF 与标准 WebView2 承载，界面使用 Vue 3 和 TypeScript；图片处理以 libvips 为核心，JPEG 由 Jpegli 进行 4:4:4 高画质编码。工作流会延迟生成中间文件，尽量从同一工作底图直接得到最终结果，避免不必要的重复解码和代际压缩。
 
-## 8.0.1 更新重点
+## 8.0.2 更新重点
 
-- 启动窗会在主窗口和 WebView2 初始化前先完成首帧显示，避免冷启动期间长时间黑屏。
-- 启动窗移除实时阴影，改用静态光晕；Logo 动画限制为 30 FPS，退出淡出缩短至 110ms。
-- 生产前端启用 Terser，并关闭未使用的 Vue Options API；`app.js` 从约 460 KB 降至约 161 KB。
-- 启动遥测细分 HTML、脚本、样式、Vue 挂载、首帧、配置快照和 WebView2 阶段，方便继续定位冷启动瓶颈。
-- 画布与节点标题栏换用无星星的艾酱主题 `28×28px` 透明光标，重新校准箭头热点并优化小尺寸抗锯齿。
-- 前端构建前会安全清理旧的 `wwwroot`，防止过期光标或静态资源混入发布包。
+- 修复 Logo 呼吸结束、切换到主界面时整个程序瞬间闪黑的问题，已通过用户本机验收。
+- 保留 Logo 呼吸和 110ms 淡出；退出时只淡出临时启动窗的内容层，主窗口保持不透明。
+- 统一宿主、生产页面和开发页面的浅色启动背景，避免前端资源加载前露出黑色底面。
+- 等待字体、图片解码和两次真实动画帧后再切换主界面，不再用固定计时器判断页面已绘制。
+- 新增启动回归与 WPF 启动冒烟测试。窗口缩放、底栏滞后及边框撕裂问题仍待处理，未纳入本次修复。
 
-完整安装包与更新说明见 [GitHub Releases](https://github.com/RukaPrPr/AichanToolbox/releases)。
+完整更新记录见 [CHANGELOG](CHANGELOG.md)，已发布安装包见 [GitHub Releases](https://github.com/RukaPrPr/AichanToolbox/releases)。
 
 ## 下载与运行
 
@@ -180,6 +179,12 @@ cd AichanToolbox
 # 完整构建
 .\build.ps1
 
+# 前端启动回归：浅色入口、真实帧等待与启动交接
+pnpm --dir frontend test
+
+# WPF 启动属性与动画冒烟（不显示窗口、不创建浏览器配置）
+dotnet run --project .\tests\AichanToolbox.StartupSmoke\AichanToolbox.StartupSmoke.csproj -c Release
+
 # 图片、工作流、目标体积分流、替换与 ZIP 引擎冒烟
 dotnet run --project .\tests\AichanToolbox.EngineSmoke\AichanToolbox.EngineSmoke.csproj -c Release -- "$(Get-Location)"
 
@@ -196,6 +201,8 @@ desktop/                    WPF 宿主、图片引擎、工作流执行器与 ZI
 frontend/                   Vue 3 / TypeScript 界面与 WebGL 连接线渲染器
 tests/AichanToolbox.EngineSmoke/
                             图片、工作流、替换与 ZIP 冒烟测试
+tests/AichanToolbox.StartupSmoke/
+                            启动窗、内容层淡出与主窗口配置冒烟测试
 tests/AichanToolbox.TargetSizeProbe/
                             目标体积编码探针
 vendor/jxl-v0.11.2-win-x64/ Jpegli 编码器及许可证

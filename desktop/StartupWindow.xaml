@@ -4,17 +4,16 @@
         Title="艾酱图片工具箱"
         Icon="Assets/aichan-windows.ico"
         WindowStyle="None"
+        AllowsTransparency="True"
         ResizeMode="NoResize"
         ShowInTaskbar="False"
         ShowActivated="False"
         Topmost="True"
         WindowStartupLocation="Manual"
         UseLayoutRounding="True"
-        Background="#F2F4F7">
-    <WindowChrome.WindowChrome>
-        <WindowChrome CaptionHeight="0" ResizeBorderThickness="0" CornerRadius="0" GlassFrameThickness="0" />
-    </WindowChrome.WindowChrome>
-    <Grid x:Name="StartupSurface" Background="#F2F4F7">
+        Background="Transparent">
+    <!-- Only this short-lived splash is layered. The main WebView2 HWND stays opaque. -->
+    <Border x:Name="StartupSurface" Background="#EEF1F4" CornerRadius="8">
         <Grid Width="126" Height="126" HorizontalAlignment="Center" VerticalAlignment="Center">
             <Ellipse Width="126" Height="126" IsHitTestVisible="False">
                 <Ellipse.Fill>
@@ -44,5 +43,5 @@
                 </Border.Triggers>
             </Border>
         </Grid>
-    </Grid>
+    </Border>
 </Window>

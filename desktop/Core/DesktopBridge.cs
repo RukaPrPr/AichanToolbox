@@ -93,7 +93,7 @@ internal sealed class DesktopBridge : IDisposable
             case "app.startup":
                 return BuildStartupSnapshot(ReadOptionalString(request.Payload, "rememberedProfile"));
             case "app.ready":
-                return new { version = "8.0.1", jobs = _jobs, archives = _archives, processorCount = Environment.ProcessorCount, maximized = _owner.WindowState == WindowState.Maximized };
+                return new { version = "8.0.2", jobs = _jobs, archives = _archives, processorCount = Environment.ProcessorCount, maximized = _owner.WindowState == WindowState.Maximized };
             case "app.frontendReady":
                 CaptureFrontendStartupMetrics(request.Payload);
                 _appReady();
@@ -402,7 +402,7 @@ internal sealed class DesktopBridge : IDisposable
         StartupTelemetry.Mark("profiles.startupSnapshot.complete");
         return new
         {
-            version = "8.0.1",
+            version = "8.0.2",
             jobs = _jobs,
             archives = _archives,
             processorCount = Environment.ProcessorCount,

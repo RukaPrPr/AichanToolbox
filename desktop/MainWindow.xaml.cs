@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Threading;
 using AichanToolbox.Core;
 using Microsoft.Web.WebView2.Core;
@@ -33,6 +34,7 @@ public partial class MainWindow : Window
     private HwndSource? _windowSource;
     private StartupWindow? _startupWindow;
     private bool _frontendRevealStarted;
+    private bool _closed;
     private readonly TaskCompletionSource<bool> _frontendReadySignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public MainWindow(string[] arguments)
@@ -60,12 +62,16 @@ public partial class MainWindow : Window
         StartupTelemetry.Mark("wpf.sourceInitialized");
         var handle = new WindowInteropHelper(this).Handle;
         _windowSource = HwndSource.FromHwnd(handle);
+        if (_windowSource?.CompositionTarget is { } target)
+            target.BackgroundColor = Color.FromRgb(0xEE, 0xF1, 0xF4);
         _windowSource?.AddHook(WindowMessageHook);
         ApplyNativeWindowFrame();
     }
 
     private void OnClosed(object? sender, EventArgs eventArgs)
     {
+        _closed = true;
+        _frontendReadySignal.TrySetCanceled();
         CloseStartupWindow();
         _windowSource?.RemoveHook(WindowMessageHook);
         _windowSource = null;
@@ -172,8 +178,10 @@ public partial class MainWindow : Window
                 : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AichanToolbox", "WebView2");
             StartupTelemetry.SetWebViewProfile(Directory.Exists(userData));
             var environment = await CoreWebView2Environment.CreateAsync(null, userData);
+            if (_closed) return;
             StartupTelemetry.Mark("webview.environmentCreated");
             await Browser.EnsureCoreWebView2Async(environment);
+            if (_closed) return;
             StartupTelemetry.Mark("webview.controlReady");
 
             Browser.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
@@ -225,6 +233,7 @@ public partial class MainWindow : Window
         }
         catch (WebView2RuntimeNotFoundException)
         {
+            if (_closed) return;
             StartupTelemetry.Mark("startup.failed.webviewMissing");
             StartupTelemetry.FlushInBackground("webview-runtime-missing");
             CloseStartupWindow();
@@ -233,6 +242,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            if (_closed) return;
             StartupTelemetry.Mark("startup.failed");
             StartupTelemetry.FlushInBackground("startup-failed");
             try { File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "startup-error.txt"), exception.ToString()); } catch { }
@@ -242,30 +252,31 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void RevealFrontend()
+    private void RevealFrontend()
     {
-        StartupTelemetry.Mark("frontend.readyReceived");
-        _frontendReadySignal.TrySetResult(true);
-        if (_frontendRevealStarted) return;
+        if (_closed || _frontendRevealStarted) return;
         _frontendRevealStarted = true;
+        StartupTelemetry.Mark("frontend.readyReceived");
 
-        // Standard WebView2 renders directly into its own HWND. A separate owned WPF
-        // startup window covers it until Vue, profiles, fonts and the first frames are ready.
-        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
-        if (!IsLoaded) return;
-        var startup = _startupWindow;
-        _startupWindow = null;
-        if (startup is not null && startup.IsLoaded)
+        // Leave the WebView2 callback before closing/fading an owned window. Frontend
+        // readiness comes from rendered frames, not from the WPF dispatcher being idle.
+        Dispatcher.BeginInvoke(DispatcherPriority.Normal, new Action(() =>
         {
-            startup.RevealAndClose(MarkFrontendRevealed);
-            return;
-        }
-        MarkFrontendRevealed();
+            if (_closed || !IsLoaded) return;
+            var startup = _startupWindow;
+            if (startup is not null && startup.IsLoaded)
+                startup.RevealAndClose(MarkFrontendRevealed);
+            else
+                MarkFrontendRevealed();
+        }));
     }
 
-    private static void MarkFrontendRevealed()
+    private void MarkFrontendRevealed()
     {
+        if (_closed) return;
+        _startupWindow = null;
         StartupTelemetry.Mark("frontend.revealed");
+        _frontendReadySignal.TrySetResult(true);
         StartupTelemetry.FlushInBackground("frontend-revealed");
     }
 
