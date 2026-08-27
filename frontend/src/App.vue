@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { callHost, importDroppedFiles, onHostEvent } from './bridge'
 import { actionDialog, requestAction, requestNotice, resolveAction } from './confirm'
 import { nodeMeta } from './defaults'
-import { useAppStore } from './store'
+import { useAppStore, workflowExecutionSignature } from './store'
 import { waitForStartupPaint } from './startup'
 import { applyTheme, resolveTheme, rememberTheme, themes } from './theme'
 import type { ArchiveJob, FileJob, NodeType, ReplacedArchiveConfirmation, ReplacedSourceConfirmation, StartupSnapshot, WorkflowDocument } from './types'
@@ -68,13 +68,9 @@ const profileOptions = computed<{ label: string; value: string | number }[]>(() 
   ...profiles.value.map(name => ({ label: name, value: name }))
 ])
 const parallelOptions: { label: string; value: string | number }[] = Array.from({ length: 16 }, (_, index) => ({ label: String(index + 1), value: index + 1 }))
-const workflowStructureSignature = computed(() => JSON.stringify({
-  autoGrayscale: store.workflow.autoGrayscale,
-  nodes: store.workflow.nodes.map(node => ({ id: node.id, type: node.type, title: node.title, x: node.x, y: node.y, width: node.width, height: node.height, data: node.data })),
-  connections: store.workflow.connections
-}))
+const executionSignature = computed(() => workflowExecutionSignature(store.workflow))
 
-watch(workflowStructureSignature, (value, previous) => {
+watch(executionSignature, (value, previous) => {
   if (previous !== undefined && value !== previous) store.invalidateRoutes()
 })
 
@@ -338,6 +334,7 @@ async function deleteProfile() {
 
 async function startWork(mode: 'estimate' | 'run') {
   try {
+    await callHost('work.validate', { workflow: store.workflow })
     const willReplaceArchive = mode === 'run' && store.workflow.nodes.some(node => node.type === 'ZipPack' && node.data.replaceSourceArchive)
     const archiveReplacement = await callHost<ReplacedArchiveConfirmation>('work.confirmReplacedArchives', {
       workflow: store.workflow,

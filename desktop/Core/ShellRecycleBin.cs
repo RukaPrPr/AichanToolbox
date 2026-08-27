@@ -12,6 +12,7 @@ internal static class ShellRecycleBin
     private const uint AllowUndo = 0x0040;
     private const uint NoErrorUi = 0x0400;
     private const uint RecycleOnDelete = 0x00080000;
+    private const uint EarlyFailure = 0x00100000;
     private const int RetryCount = 3;
     private static readonly Guid ShellItemId = new("43826D1E-E718-42EE-BC55-A1E261C37BFE");
     private static readonly BlockingCollection<RecycleRequest> Requests = new();
@@ -92,7 +93,7 @@ internal static class ShellRecycleBin
         {
             try
             {
-                DeleteFileCore(request.Path);
+                DeleteFileWithRetry(request.Path, DeleteFileOnce);
                 request.Completion.TrySetResult(true);
             }
             catch (Exception exception)
@@ -102,7 +103,7 @@ internal static class ShellRecycleBin
         }
     }
 
-    private static void DeleteFileCore(string path)
+    internal static void DeleteFileWithRetry(string path, Action<string> deleteFile)
     {
         Exception? lastError = null;
         for (var attempt = 0; attempt < RetryCount; attempt++)
@@ -111,13 +112,9 @@ internal static class ShellRecycleBin
 
             try
             {
-                DeleteFileOnce(path);
+                deleteFile(path);
                 if (!File.Exists(path)) return;
                 lastError = new IOException("Windows 回收站接口返回成功，但原文件仍然存在。");
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
             }
             catch (Exception exception)
             {
@@ -138,7 +135,7 @@ internal static class ShellRecycleBin
         {
             operation = (IFileOperation)new FileOperationComObject();
             ThrowIfFailed(
-                operation.SetOperationFlags(Silent | NoConfirmation | AllowUndo | NoErrorUi | RecycleOnDelete),
+                operation.SetOperationFlags(Silent | NoConfirmation | AllowUndo | NoErrorUi | RecycleOnDelete | EarlyFailure),
                 "设置回收站操作");
 
             var shellItemId = ShellItemId;
@@ -148,7 +145,7 @@ internal static class ShellRecycleBin
             ThrowIfFailed(operation.DeleteItem(shellItem, IntPtr.Zero), "登记回收文件");
             ThrowIfFailed(operation.PerformOperations(), "执行回收文件");
             ThrowIfFailed(operation.GetAnyOperationsAborted(out var aborted), "读取回收结果");
-            if (aborted) throw new OperationCanceledException("文件回收操作已取消。");
+            if (aborted) throw new IOException("Windows 未能完成文件回收操作。");
         }
         finally
         {

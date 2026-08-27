@@ -32,8 +32,7 @@ internal sealed class DesktopBridge : IDisposable
     private readonly ArchiveService _archiveService = new();
     private CancellationTokenSource? _workCancellation;
     private string? _lastOutputDirectory;
-    private readonly object _outputGate = new();
-    private readonly HashSet<string> _reservedOutputs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ImageOutputWriter _outputWriter = new();
 
     public DesktopBridge(Window owner, WebView2 browser, Action beginWindowDrag, Action<string> beginWindowResize,
         Action appReady, AppearanceSettings appearance, Action<ThemeSelection> setTheme)
@@ -104,7 +103,7 @@ internal sealed class DesktopBridge : IDisposable
                     ReadString(request.Payload, "background")));
                 return new { theme = _appearance.Current.Id };
             case "app.ready":
-                return new { version = "8.1.0", jobs = _jobs, archives = _archives, processorCount = Environment.ProcessorCount, maximized = _owner.WindowState == WindowState.Maximized };
+                return new { version = "8.1.1", jobs = _jobs, archives = _archives, processorCount = Environment.ProcessorCount, maximized = _owner.WindowState == WindowState.Maximized };
             case "app.frontendReady":
                 CaptureFrontendStartupMetrics(request.Payload);
                 _appReady();
@@ -184,6 +183,9 @@ internal sealed class DesktopBridge : IDisposable
             case "profiles.delete":
                 DeleteProfile(ReadString(request.Payload, "name"));
                 return ListProfiles();
+            case "work.validate":
+                ValidateWorkflow(ReadWorkflowProperty(request.Payload, "workflow"));
+                return null;
             case "work.confirmReplacedSources":
                 return ConfirmReplacedSources(
                     ReadString(request.Payload, "mode"),
@@ -413,7 +415,7 @@ internal sealed class DesktopBridge : IDisposable
         StartupTelemetry.Mark("profiles.startupSnapshot.complete");
         return new
         {
-            version = "8.1.0",
+            version = "8.1.1",
             theme = _appearance.Current.Id,
             jobs = _jobs,
             archives = _archives,
@@ -904,7 +906,16 @@ internal sealed class DesktopBridge : IDisposable
             {
                 item.RouteNodeIds.Clear();
                 item.RouteConnectionIds.Clear();
+                item.TargetSizeNotes.Clear();
                 item.OutputNodeId = "";
+                item.OutputReady = false;
+                item.OutputWarning = null;
+                if (item.Checked)
+                {
+                    item.OutputPath = null;
+                    item.EstimatedSize = null;
+                    item.Status = estimate ? "待预估" : "待处理";
+                }
             }
             Emit("jobsChanged", _jobs);
             Emit("workState", new { busy = true, mode = estimate ? "estimate" : "run", stage = "images", total = selected.Count });
@@ -926,17 +937,7 @@ internal sealed class DesktopBridge : IDisposable
                     var cacheHit = workflow.CacheEstimates && TryGetCache(job.Id, signature, out cache);
                     if (cacheHit && cache is not null)
                     {
-                        result = new ExecutionResult
-                        {
-                            FinalPath = cache.ResultPath,
-                            OutputNodeId = cache.OutputNodeId,
-                            Size = cache.Size,
-                            Width = cache.Width,
-                            Height = cache.Height,
-                            RouteNodeIds = cache.RouteNodeIds.ToList(),
-                            RouteConnectionIds = cache.RouteConnectionIds.ToList(),
-                            Transformed = !cache.ResultPath.Equals(job.SourcePath, StringComparison.OrdinalIgnoreCase)
-                        };
+                        result = cache.RestoreResult(job.SourcePath);
                         Interlocked.Increment(ref cacheHits);
                     }
                     else
@@ -944,16 +945,11 @@ internal sealed class DesktopBridge : IDisposable
                         result = await _runner.ExecuteAsync(job, workflow, token);
                     }
 
-                    job.TargetFormat = ImageMetadataReader.FormatName(result.FinalPath);
-                    job.OutputNodeId = result.OutputNodeId;
-                    job.RouteNodeIds = result.RouteNodeIds.ToList();
-                    job.RouteConnectionIds = result.RouteConnectionIds.ToList();
+                    job.ApplyExecutionResult(result);
+                    token.ThrowIfCancellationRequested();
 
                     if (estimate)
                     {
-                        job.EstimatedSize = result.Size;
-                        job.TargetWidth = result.Width;
-                        job.TargetHeight = result.Height;
                         if (!result.Transformed)
                         {
                             job.OutputPath = null;
@@ -976,13 +972,11 @@ internal sealed class DesktopBridge : IDisposable
                     }
                     else
                     {
-                        job.TargetWidth = result.Width;
-                        job.TargetHeight = result.Height;
                         if (!result.Transformed)
                         {
                             job.OutputPath = null;
-                            job.EstimatedSize = result.Size;
                             job.Status = "不处理";
+                            job.OutputReady = true;
                             Interlocked.Increment(ref skipped);
                             RemoveCache(job.Id);
                         }
@@ -990,26 +984,19 @@ internal sealed class DesktopBridge : IDisposable
                         {
                             var outputNode = workflow.Nodes.First(node => node.Id == result.OutputNodeId);
                             var persisted = PersistOutput(job, result, outputNode);
-                            job.OutputPath = persisted.Path;
-                            job.EstimatedSize = persisted.Size;
-                            job.Status = persisted.Replaced ? "已完成 · 已替换原图" : cacheHit ? "已完成 · 使用预估缓存" : "已完成";
+                            job.ApplySavedOutput(result, persisted, cacheHit);
                             if (persisted.Replaced)
                             {
                                 Interlocked.Increment(ref replaced);
                                 RemoveCache(job.Id);
-                                if (string.IsNullOrWhiteSpace(job.OriginalSourcePath)) job.OriginalSourcePath = job.SourcePath;
-                                job.SourceWasReplaced = true;
-                                job.SourcePath = persisted.Path;
-                                job.CurrentSize = persisted.Size;
-                                job.CurrentWidth = result.Width;
-                                job.CurrentHeight = result.Height;
                             }
                             if (!cacheHit) CleanupExecution(result, null);
                         }
                     }
+                    if (result.TargetSizeNotes.Count > 0) job.Status += " · 已保留最小结果";
                     Interlocked.Increment(ref successes);
                 }
-                catch (OperationCanceledException) { job.Status = "已取消"; }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { job.Status = "已取消"; }
                 catch (Exception exception)
                 {
                     job.Status = "失败 · " + FriendlyMessage(exception);
@@ -1037,7 +1024,7 @@ internal sealed class DesktopBridge : IDisposable
             }
             return summary;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             summary.Successes = successes;
             summary.Failures = failures;
@@ -1109,32 +1096,13 @@ internal sealed class DesktopBridge : IDisposable
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var archiveJobs = _jobs.Where(job => job.ArchiveJobId == archive.Id).ToList();
-                if (archiveJobs.Any(job => job.Status.StartsWith("失败", StringComparison.Ordinal)))
-                {
-                    archive.Status = "未打包 · 存在处理失败图片";
-                    failedArchiveIds.Add(archive.Id);
-                    failures++;
-                    completed++;
-                    Emit("archivesChanged", _archives);
-                    Emit("workProgress", new { completed, total, stage = "postprocess", archive });
-                    continue;
-                }
-
-                var replacements = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var job in archiveJobs.Where(job => inputByOutput.ContainsKey(job.OutputNodeId)))
-                {
-                    var source = !string.IsNullOrWhiteSpace(job.OutputPath) && File.Exists(job.OutputPath)
-                        ? job.OutputPath
-                        : File.Exists(job.SourcePath) ? job.SourcePath : null;
-                    if (source is not null) replacements[job.ArchiveEntryPath] = source;
-                }
-
                 var sourceDirectory = Path.GetDirectoryName(archive.SourcePath) ?? Environment.CurrentDirectory;
                 var baseName = Path.GetFileNameWithoutExtension(archive.SourcePath);
                 var temporary = Path.Combine(sourceDirectory, $".{baseName}.aichan-pack-{Guid.NewGuid():N}.zip");
                 string? finalPath = null;
                 try
                 {
+                    var replacements = BuildArchiveReplacements(archiveJobs, inputByOutput.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase));
                     archive.Status = "正在 Store 打包";
                     archive.Progress = 0;
                     Emit("archivesChanged", _archives);
@@ -1185,7 +1153,7 @@ internal sealed class DesktopBridge : IDisposable
                         EmitJob(job);
                     }
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
                     archive.Status = "已取消";
                     TryDelete(temporary);
@@ -1273,66 +1241,34 @@ internal sealed class DesktopBridge : IDisposable
         catch { }
     }
 
-    private (string Path, long Size, bool Replaced) PersistOutput(FileJob job, ExecutionResult result, WorkflowNode outputNode)
+    internal static Dictionary<string, string> BuildArchiveReplacements(IReadOnlyList<FileJob> jobs, IReadOnlySet<string> outputNodeIds)
     {
-        var sourceExtension = Path.GetExtension(job.SourcePath).ToLowerInvariant();
-        var resultExtension = Path.GetExtension(result.FinalPath).ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(resultExtension)) resultExtension = ".jpg";
-        var sourceDirectory = Path.GetDirectoryName(job.SourcePath) ?? Environment.CurrentDirectory;
-        var directory = outputNode.Data.SameFolder ? sourceDirectory : outputNode.Data.OutputDirectory;
-        if (string.IsNullOrWhiteSpace(directory)) throw new InvalidOperationException("保存输出节点没有设置输出目录。");
-        Directory.CreateDirectory(directory);
+        var incomplete = jobs.FirstOrDefault(job => job.Checked && !job.OutputReady);
+        if (incomplete is not null)
+            throw new InvalidOperationException($"图片“{incomplete.Name}”尚未完成输出（{incomplete.Status}），已阻止打包，不会回退使用原图。");
 
-        var baseName = Path.GetFileNameWithoutExtension(job.SourcePath);
-        if (outputNode.Data.ReplaceOriginal)
+        var replacements = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var job in jobs.Where(job => outputNodeIds.Contains(job.OutputNodeId)))
         {
-            if (!result.Transformed && result.FinalPath.Equals(job.SourcePath, StringComparison.OrdinalIgnoreCase))
-                return (job.SourcePath, job.OriginalSize, false);
-
-            lock (_outputGate)
-            {
-                var desired = Path.Combine(sourceDirectory, baseName + resultExtension);
-                if (!desired.Equals(job.SourcePath, StringComparison.OrdinalIgnoreCase) && File.Exists(desired))
-                    desired = ReserveOutput(sourceDirectory, baseName, resultExtension);
-                var pending = ReserveOutput(sourceDirectory, baseName + "_aichan_pending", resultExtension);
-                try
-                {
-                    File.Copy(result.FinalPath, pending, false);
-                    WaitForExclusiveAccess(job.SourcePath);
-                    ShellRecycleBin.DeleteFile(job.SourcePath);
-                    File.Move(pending, desired, true);
-                    _lastOutputDirectory = sourceDirectory;
-                    return (desired, new FileInfo(desired).Length, true);
-                }
-                catch
-                {
-                    TryDelete(pending);
-                    throw;
-                }
-            }
+            if (!job.OutputReady)
+                throw new InvalidOperationException($"图片“{job.Name}”的输出未就绪，已阻止打包。");
+            var source = string.IsNullOrWhiteSpace(job.OutputPath) ? job.SourcePath : job.OutputPath;
+            if (!File.Exists(source))
+                throw new FileNotFoundException($"图片“{job.Name}”的输出文件丢失，已阻止打包，不会回退使用原图。", source);
+            replacements[job.ArchiveEntryPath] = source;
         }
+        return replacements;
+    }
 
-        var changedFormat = !sourceExtension.Equals(resultExtension, StringComparison.OrdinalIgnoreCase)
-            && !((sourceExtension is ".jpg" or ".jpeg") && (resultExtension is ".jpg" or ".jpeg"));
-        var outputBase = changedFormat ? baseName : baseName + "_processed";
-        var output = ReserveOutput(directory, outputBase, resultExtension);
-        File.Copy(result.FinalPath, output, false);
-        _lastOutputDirectory = directory;
-        return (output, new FileInfo(output).Length, false);
+    private ImageOutputResult PersistOutput(FileJob job, ExecutionResult result, WorkflowNode outputNode)
+    {
+        var saved = _outputWriter.Write(job, result, outputNode);
+        _lastOutputDirectory = Path.GetDirectoryName(saved.Path);
+        return saved;
     }
 
     private string ReserveOutput(string directory, string baseName, string extension)
-    {
-        lock (_outputGate)
-        {
-            var candidate = Path.Combine(directory, baseName + extension);
-            var number = 1;
-            while (File.Exists(candidate) || _reservedOutputs.Contains(candidate))
-                candidate = Path.Combine(directory, baseName + "_" + number++ + extension);
-            _reservedOutputs.Add(candidate);
-            return candidate;
-        }
-    }
+        => _outputWriter.Reserve(directory, baseName, extension);
 
     internal static void WaitForExclusiveAccess(string path)
     {
@@ -1437,7 +1373,14 @@ internal sealed class DesktopBridge : IDisposable
                 continue;
             }
 
-            if (!outgoing.TryGetValue(node.Id, out var connections)) continue;
+            outgoing.TryGetValue(node.Id, out var connections);
+            if (node.Type == "TargetSize" && node.Data.TargetKeepSmallestOnUnmet
+                && (connections is null || !connections.Any(connection =>
+                    connection.FromPort.Equals("unmet", StringComparison.OrdinalIgnoreCase)
+                    && nodes.ContainsKey(connection.ToNodeId))))
+                throw new InvalidOperationException(
+                    $"节点“{node.Title}”已勾选“未达标时输出最小结果”，但“未达标”出口缺失或未连接有效节点。请连接该出口后再启动工作流。");
+            if (connections is null) continue;
             if (node.Type == "FormatFilter")
             {
                 Enqueue("jpg", formats & ImageFormatSet.Jpg, transformed);
@@ -1497,7 +1440,7 @@ internal sealed class DesktopBridge : IDisposable
         return string.Join("/", labels);
     }
 
-    private static string BuildSignature(FileJob job, WorkflowDocument workflow)
+    internal static string BuildSignature(FileJob job, WorkflowDocument workflow)
     {
         var info = new FileInfo(job.SourcePath);
         var builder = new StringBuilder()
@@ -1520,7 +1463,7 @@ internal sealed class DesktopBridge : IDisposable
                 .Append(node.Data.ReplaceSourceArchive);
         }
         foreach (var connection in workflow.Connections.OrderBy(value => value.FromNodeId + value.FromPort, StringComparer.Ordinal))
-            builder.Append('|').Append(connection.FromNodeId).Append(':').Append(connection.FromPort).Append('>')
+            builder.Append('|').Append(connection.Id).Append(':').Append(connection.FromNodeId).Append(':').Append(connection.FromPort).Append('>')
                 .Append(connection.ToNodeId).Append(':').Append(connection.ToPort);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())));
     }
@@ -1539,17 +1482,7 @@ internal sealed class DesktopBridge : IDisposable
     private void StoreCache(string jobId, string signature, ExecutionResult result)
     {
         RemoveCache(jobId);
-        _cache[jobId] = new EstimateCacheEntry
-        {
-            Signature = signature,
-            ResultPath = result.FinalPath,
-            OutputNodeId = result.OutputNodeId,
-            Size = result.Size,
-            Width = result.Width,
-            Height = result.Height,
-            RouteNodeIds = result.RouteNodeIds.ToList(),
-            RouteConnectionIds = result.RouteConnectionIds.ToList()
-        };
+        _cache[jobId] = EstimateCacheEntry.FromResult(signature, result);
         CleanupExecution(result, result.FinalPath);
     }
 

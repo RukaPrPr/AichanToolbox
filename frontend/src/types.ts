@@ -91,6 +91,8 @@ export interface FileJob {
   outputPath?: string | null
   routeNodeIds: string[]
   routeConnectionIds: string[]
+  targetSizeNotes?: string[]
+  outputWarning?: string | null
 }
 
 export interface ArchiveJob {

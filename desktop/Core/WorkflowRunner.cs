@@ -62,6 +62,7 @@ internal sealed class WorkflowRunner
                     Transformed = state.Transformed,
                     RouteNodeIds = state.RouteNodeIds.ToList(),
                     RouteConnectionIds = state.RouteConnectionIds.ToList(),
+                    TargetSizeNotes = state.TargetSizeNotes.ToList(),
                     TemporaryFiles = state.TemporaryFiles.ToList()
                 };
             }
@@ -100,6 +101,8 @@ internal sealed class WorkflowRunner
                     var targetSize = await ApplyTargetSizeAsync(state, node, cancellationToken).ConfigureAwait(false);
                     nextPort = targetSize.MetTarget ? "out" : "unmet";
                     unconnectedMessage = targetSize.UnmetMessage;
+                    if (!targetSize.MetTarget && node.Data.TargetKeepSmallestOnUnmet)
+                        state.TargetSizeNotes.Add($"节点“{node.Title}”：{targetSize.UnmetMessage} 已保留最小结果，并继续“未达标”分支。");
                     break;
                 default:
                     throw new InvalidOperationException($"不支持的节点：{node.Title}");

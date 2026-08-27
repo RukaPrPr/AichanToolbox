@@ -456,9 +456,15 @@ internal sealed class ImageEngine
             using var red = srgb.ExtractBand(0);
             using var green = srgb.ExtractBand(1);
             using var blue = srgb.ExtractBand(2);
-            using var redGreen = red.Subtract(green).Abs();
-            using var redBlue = red.Subtract(blue).Abs();
-            using var greenBlue = green.Subtract(blue).Abs();
+            // Every native intermediate owns upstream image references. Chaining
+            // Subtract(...).Abs() leaves the subtraction alive until finalization,
+            // retaining the source mapping and blocking Windows recycling.
+            using var redMinusGreen = red.Subtract(green);
+            using var redMinusBlue = red.Subtract(blue);
+            using var greenMinusBlue = green.Subtract(blue);
+            using var redGreen = redMinusGreen.Abs();
+            using var redBlue = redMinusBlue.Abs();
+            using var greenBlue = greenMinusBlue.Abs();
             using var firstMaximum = redGreen.Maxpair(redBlue);
             using var channelDelta = firstMaximum.Maxpair(greenBlue);
             var tolerance = srgb.Format == Enums.BandFormat.Ushort ? 384d : 1.5d;

@@ -121,6 +121,10 @@ function bytes(value: number | null | undefined) {
 function dimensions(width: number, height: number) {
   return width > 0 && height > 0 ? `${width} × ${height}` : '未知'
 }
+
+function routeTitle(job: FileJob) {
+  return store.routeUnavailableReason(job) || (store.highlightedJobId === job.id ? '取消显示工作流路径' : '显示这张图片的工作流路径')
+}
 </script>
 
 <template>
@@ -162,14 +166,13 @@ function dimensions(width: number, height: number) {
           <span>{{ dimensions(job.targetWidth, job.targetHeight) }}</span>
           <span class="estimate-value">{{ bytes(job.estimatedSize) }}</span>
           <span class="status-cell">
-            <span>{{ job.status }}</span>
+            <span :title="[job.status, ...(job.targetSizeNotes ?? []), job.outputWarning].filter(Boolean).join('\n')">{{ job.status }}</span>
             <button
-              v-if="store.routesValid && job.routeNodeIds?.length"
               class="route-button"
               :class="{ active: store.highlightedJobId === job.id }"
-              :title="store.highlightedJobId === job.id ? '取消显示工作流路径' : '显示这张图片的工作流路径'"
-              :aria-label="store.highlightedJobId === job.id ? '取消显示工作流路径' : '显示工作流路径'"
-              :disabled="busy"
+              :title="routeTitle(job)"
+              :aria-label="routeTitle(job)"
+              :disabled="busy || !!store.routeUnavailableReason(job)"
               @click.stop="store.showJobRoute(job.id)"
             >
               <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4" cy="14.5" r="1.7"/><circle cx="10" cy="6" r="1.7"/><circle cx="16" cy="11" r="1.7"/><path d="M5.2 13.1 8.8 7.4M11.5 7.1l3.1 2.7"/></svg>

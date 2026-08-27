@@ -27,6 +27,16 @@ try
     Require(ShellRecycleBin.WorkerApartmentState == ApartmentState.STA, "回收站队列没有运行在专用 STA 线程中。");
 
     DesktopBridge.ValidateWorkflow(LinearWorkflow(Node("validated-convert", "ConvertJpg")));
+    var signatureWorkflow = LinearWorkflow(Node("signature-convert", "ConvertJpg"));
+    var signatureJob = Job(source, 64, 32);
+    var signatureBeforeLayout = DesktopBridge.BuildSignature(signatureJob, signatureWorkflow);
+    signatureWorkflow.Nodes[0].X += 100;
+    signatureWorkflow.Nodes[0].Width = 3200;
+    signatureWorkflow.Nodes[0].Title = "文件列表";
+    signatureWorkflow.Viewport.Zoom = 0.5;
+    Require(DesktopBridge.BuildSignature(signatureJob, signatureWorkflow) == signatureBeforeLayout, "布局变化错误地清除了可复用的预估缓存。");
+    signatureWorkflow.Connections[0].Id = Guid.NewGuid().ToString("N");
+    Require(DesktopBridge.BuildSignature(signatureJob, signatureWorkflow) != signatureBeforeLayout, "重建连线后仍可能复用包含旧连线 ID 的预估路径。");
     var unsafeOutputRejected = false;
     try { DesktopBridge.ValidateWorkflow(LinearWorkflow(Node("unsafe-resize", "Resize", data => data.ScalePercent = 80))); }
     catch (InvalidOperationException exception) when (exception.Message.Contains("未生成 JPG", StringComparison.Ordinal)) { unsafeOutputRejected = true; }
@@ -135,6 +145,29 @@ try
     Require(Path.GetExtension(targetSized.FinalPath).Equals(".jpg", StringComparison.OrdinalIgnoreCase), "目标体积节点没有生成 JPEG。");
     Require(targetSized.Size <= targetBytes, $"目标体积节点输出超标：{targetSized.Size} > {targetBytes}。");
     Require(targetSized.Width == 256 && targetSized.Height == 256, "目标体积节点意外改变了分辨率。");
+    Require(targetSized.TargetSizeNotes.Count == 0, "达标结果不应带有保留最小结果的提示。");
+
+    var missingUnmetWorkflow = LinearWorkflow(Node("missing-unmet", "TargetSize", data =>
+    {
+        data.TargetSizeMb = 8;
+        data.TargetKeepSmallestOnUnmet = true;
+    }));
+    var missingUnmetRejected = false;
+    try { DesktopBridge.ValidateWorkflow(missingUnmetWorkflow); }
+    catch (InvalidOperationException exception) when (exception.Message.Contains("未达标", StringComparison.Ordinal)
+        && exception.Message.Contains("出口缺失", StringComparison.Ordinal)) { missingUnmetRejected = true; }
+    Require(missingUnmetRejected, "勾选最小结果却未连接未达标出口时，没有在编码前拒绝启动。");
+    missingUnmetWorkflow.Connections.Add(new WorkflowConnection { FromNodeId = "missing-unmet", FromPort = "unmet", ToNodeId = "missing-node" });
+    var danglingUnmetRejected = false;
+    try { DesktopBridge.ValidateWorkflow(missingUnmetWorkflow); }
+    catch (InvalidOperationException exception) when (exception.Message.Contains("出口缺失", StringComparison.Ordinal)) { danglingUnmetRejected = true; }
+    Require(danglingUnmetRejected, "未达标出口连接到不存在的节点时没有被预检拒绝。");
+    missingUnmetWorkflow.Nodes.Single(node => node.Id == "missing-unmet").Data.TargetKeepSmallestOnUnmet = false;
+    missingUnmetWorkflow.Connections.RemoveAt(missingUnmetWorkflow.Connections.Count - 1);
+    DesktopBridge.ValidateWorkflow(missingUnmetWorkflow);
+    var unusedTargetWorkflow = LinearWorkflow(Node("used-convert", "ConvertJpg"));
+    unusedTargetWorkflow.Nodes.Add(Node("unused-target", "TargetSize", data => data.TargetKeepSmallestOnUnmet = true));
+    DesktopBridge.ValidateWorkflow(unusedTargetWorkflow);
 
     var targetPassThrough = await runner.ExecuteAsync(
         Job(graySource, 96, 64),
@@ -151,6 +184,7 @@ try
     Require(!targetSkipped.Transformed, "关闭最小结果开关后，未达标分支仍修改了入口状态。");
     Require(targetSkipped.FinalPath.Equals(noisySource, StringComparison.OrdinalIgnoreCase), "关闭最小结果开关后，未达标分支没有跳过目标体积节点。");
     Require(targetSkipped.RouteConnectionIds.Contains(targetSkipConnection.Id), "目标体积未达标分支没有记录 unmet 连线。");
+    Require(targetSkipped.TargetSizeNotes.Count == 0, "关闭最小结果开关后不应提示已保留最小结果。");
 
     var targetKeepWorkflow = TargetUnmetWorkflow(true);
     DesktopBridge.ValidateWorkflow(targetKeepWorkflow);
@@ -159,6 +193,14 @@ try
     Require(Path.GetExtension(targetKept.FinalPath).Equals(".jpg", StringComparison.OrdinalIgnoreCase), "未达标分支保留的最小结果不是 JPG。");
     Require(targetKept.Size > targetUnmetBytes, "强制未达标测试意外达到了目标体积。");
     Require(targetKept.Size < new FileInfo(noisySource).Length, "未达标分支没有保留体积最小的真实编码候选。");
+    Require(targetKept.RouteConnectionIds.Contains(targetKeepWorkflow.Connections.Single(value => value.FromPort == "unmet").Id), "保留最小结果后没有继续未达标分支。");
+    Require(targetKept.TargetSizeNotes.Count == 1 && targetKept.TargetSizeNotes[0].Contains("已保留最小结果", StringComparison.Ordinal), "成功继续的未达标结果缺少非失败提示。");
+    var keptCache = EstimateCacheEntry.FromResult("kept-result", targetKept);
+    var keptFromCache = keptCache.RestoreResult(noisySource);
+    Require(keptFromCache.TargetSizeNotes.SequenceEqual(targetKept.TargetSizeNotes)
+        && keptFromCache.RouteConnectionIds.SequenceEqual(targetKept.RouteConnectionIds), "预估缓存丢失了未达标提示或执行路径。");
+    keptFromCache.TargetSizeNotes.Clear();
+    Require(keptCache.TargetSizeNotes.Count == 1 && targetKept.TargetSizeNotes.Count == 1, "缓存还原结果与缓存本身共享了可变提示列表。");
 
     var legacyTargetFailurePreserved = false;
     try
@@ -184,6 +226,14 @@ try
     Require(targetFallback.Width == 128 && targetFallback.Height == 128, "未达标分支没有进入二次按比例缩放。");
     Require(targetFallback.Size <= targetBytes, "二次缩放后的目标体积节点仍未达标。");
     Require(targetFallback.RouteConnectionIds.Contains(fallbackWorkflow.Connections.Single(value => value.FromNodeId == "target-unmet" && value.FromPort == "unmet").Id), "二次缩放工作流没有经过未达标出口。");
+
+    var keptFallbackWorkflow = TargetFallbackWorkflow();
+    keptFallbackWorkflow.Nodes.Single(node => node.Id == "target-unmet").Data.TargetKeepSmallestOnUnmet = true;
+    DesktopBridge.ValidateWorkflow(keptFallbackWorkflow);
+    var keptFallback = await runner.ExecuteAsync(Job(noisySource, 256, 256), keptFallbackWorkflow, CancellationToken.None);
+    Require(keptFallback.Width == 128 && keptFallback.Height == 128 && keptFallback.Size <= targetBytes,
+        "保留最小结果后没有继续下游缩放和再次目标体积压缩。");
+    Require(keptFallback.TargetSizeNotes.Count == 1, "下游节点处理丢失了上游保留最小结果的提示。");
 
     var unsafeTargetSkipRejected = false;
     try { DesktopBridge.ValidateWorkflow(TargetUnmetAfterResizeWorkflow(false)); }
@@ -250,6 +300,167 @@ try
         Require(packed.Entries.All(entry => entry.CompressedLength == entry.Length), "ZIP 后处理没有使用 Store/仅存储。");
     }
 
+    // Run the complete unmet-result path through saving and ZIP packaging.
+    // Only the Windows recycle response is injected; image/ZIP bytes are real.
+    var noisyJpeg = await engine.RenderAsync(noisySource, ".jpg", 256, 256, 100, false, 0, CancellationToken.None);
+    var unmetArchivePath = Path.Combine(temporaryRoot, "unmet-output.zip");
+    using (var zip = ZipFile.Open(unmetArchivePath, ZipArchiveMode.Create))
+        zip.CreateEntryFromFile(noisyJpeg, "pages/001.jpg", CompressionLevel.NoCompression);
+    var unmetArchive = new ArchiveJob { NodeId = "zip-extract", SourcePath = unmetArchivePath };
+    await archiveService.ExtractAsync(unmetArchive, "auto", null, null, CancellationToken.None);
+    var unmetEntry = unmetArchive.Entries.Single();
+    var unmetJob = Job(unmetEntry.ExtractedPath, 256, 256);
+    unmetJob.ArchiveJobId = unmetArchive.Id;
+    unmetJob.ArchiveEntryPath = unmetEntry.EntryPath;
+    var unmetOriginalBytes = File.ReadAllBytes(unmetJob.SourcePath);
+    var saveWorkflow = TargetUnmetWorkflow(true);
+    var saveNode = saveWorkflow.Nodes.Single(node => node.Type == "Output");
+    saveNode.Data.ReplaceOriginal = true;
+    var unmetOutput = await runner.ExecuteAsync(unmetJob, saveWorkflow, CancellationToken.None);
+    Require(unmetOutput.TargetSizeNotes.Count == 1 && unmetOutput.Size > targetUnmetBytes, "保存链路测试未产生真实的未达标最小结果。");
+    unmetJob.ApplyExecutionResult(unmetOutput);
+    Require(unmetJob.EstimatedSize == unmetOutput.Size && !unmetJob.OutputReady, "生成结果后没有立即显示实际体积，或误认为已保存。");
+
+    var recycleAttempts = 0;
+    var interruptedRecycleWriter = new ImageOutputWriter(path => ShellRecycleBin.DeleteFileWithRetry(path, _ =>
+    {
+        recycleAttempts++;
+        throw new OperationCanceledException("模拟 Windows 静默中止回收，工作流并未取消。");
+    }));
+    var savedUnmet = interruptedRecycleWriter.Write(unmetJob, unmetOutput, saveNode);
+    unmetJob.ApplySavedOutput(unmetOutput, savedUnmet, false);
+    Require(recycleAttempts == 3, "Windows 回收中止没有按文件操作失败重试。");
+    Require(!savedUnmet.Replaced && !unmetJob.SourceWasReplaced && unmetJob.OutputReady, "另存成功后的输出状态错误。");
+    Require(unmetJob.Status.StartsWith("已完成", StringComparison.Ordinal) && unmetJob.Status.Contains("另存", StringComparison.Ordinal), "回收站中止仍被标记为工作流已取消。");
+    Require(unmetJob.OutputWarning?.Contains("原图未替换", StringComparison.Ordinal) == true, "回收失败另存结果后没有明确提示。");
+    Require(File.ReadAllBytes(unmetJob.SourcePath).SequenceEqual(unmetOriginalBytes), "回收失败时覆盖或删除了原图。");
+    Require(File.ReadAllBytes(savedUnmet.Path).SequenceEqual(File.ReadAllBytes(unmetOutput.FinalPath)), "另存的文件不是实际最小结果。");
+    Require(unmetJob.EstimatedSize == new FileInfo(savedUnmet.Path).Length && unmetJob.EstimatedSize < unmetJob.OriginalSize,
+        "预估大小没有显示实际保存的最小结果大小。");
+
+    var outputIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { saveNode.Id };
+    var unmetReplacements = DesktopBridge.BuildArchiveReplacements([unmetJob], outputIds);
+    Require(unmetReplacements[unmetEntry.EntryPath] == savedUnmet.Path, "ZIP 没有选用另存的最小结果。");
+    var unmetPackedPath = Path.Combine(temporaryRoot, "unmet-output-processed.zip");
+    await archiveService.PackStoreAsync(unmetArchive, unmetReplacements, true, unmetPackedPath, null, CancellationToken.None);
+    await ArchiveService.VerifyAsync(unmetPackedPath, 1, CancellationToken.None);
+    using (var packed = ZipFile.OpenRead(unmetPackedPath))
+    using (var entryStream = packed.GetEntry(unmetEntry.EntryPath)!.Open())
+    using (var content = new MemoryStream())
+    {
+        entryStream.CopyTo(content);
+        Require(content.ToArray().SequenceEqual(File.ReadAllBytes(unmetOutput.FinalPath)), "最终 ZIP 内仍是原图，而不是最小结果。");
+        Require(content.Length == unmetJob.EstimatedSize, "ZIP 内的实际结果体积与文件列表显示不一致。");
+    }
+
+    var incompleteJob = Job(unmetEntry.ExtractedPath, 256, 256);
+    incompleteJob.ArchiveEntryPath = unmetEntry.EntryPath;
+    incompleteJob.ApplyExecutionResult(unmetOutput);
+    foreach (var incompleteStatus in new[] { "已取消", "失败 · 无法保存", "正在处理" })
+    {
+        incompleteJob.Status = incompleteStatus;
+        incompleteJob.OutputPath = savedUnmet.Path; // A stale path must not bypass completion checks.
+        var incompleteBlocked = false;
+        try { DesktopBridge.BuildArchiveReplacements([incompleteJob], outputIds); }
+        catch (InvalidOperationException) { incompleteBlocked = true; }
+        Require(incompleteBlocked, $"{incompleteStatus}的图片仍可回退原图进行 ZIP 打包。");
+    }
+    var realSavedPath = unmetJob.OutputPath;
+    unmetJob.OutputPath = Path.Combine(temporaryRoot, "missing-processed-result.jpg");
+    var missingResultBlocked = false;
+    try { DesktopBridge.BuildArchiveReplacements([unmetJob], outputIds); }
+    catch (FileNotFoundException) { missingResultBlocked = true; }
+    Require(missingResultBlocked, "保存结果丢失后仍静默回退到原图。");
+    unmetJob.OutputPath = realSavedPath;
+    var unchangedJob = Job(unmetEntry.ExtractedPath, 256, 256);
+    unchangedJob.ArchiveEntryPath = "pages/unchanged.jpg";
+    unchangedJob.OutputNodeId = saveNode.Id;
+    unchangedJob.OutputReady = true;
+    unchangedJob.Status = "不处理";
+    Require(DesktopBridge.BuildArchiveReplacements([unchangedJob], outputIds)[unchangedJob.ArchiveEntryPath] == unchangedJob.SourcePath,
+        "正常不处理分支不再允许使用原图打包。");
+    var uncheckedJob = Job(unmetEntry.ExtractedPath, 256, 256);
+    uncheckedJob.Checked = false;
+    Require(DesktopBridge.BuildArchiveReplacements([unmetJob, uncheckedJob], outputIds).Count == 1,
+        "未勾选的图片错误阻止了其他结果打包。");
+
+    var replaceCopy = Path.Combine(temporaryRoot, "successful-replacement.jpg");
+    File.Copy(noisyJpeg, replaceCopy);
+    var replaceJob = Job(replaceCopy, 256, 256);
+    replaceJob.ApplyExecutionResult(unmetOutput);
+    var successfulWriter = new ImageOutputWriter(File.Delete); // Only deletes this generated fixture.
+    var replacedResult = successfulWriter.Write(replaceJob, unmetOutput, saveNode);
+    replaceJob.ApplySavedOutput(unmetOutput, replacedResult, false);
+    Require(replacedResult.Replaced && replaceJob.SourceWasReplaced && replaceJob.OutputReady, "正常替换原图的状态被破坏。");
+    Require(replaceJob.EstimatedSize == unmetOutput.Size && File.ReadAllBytes(replaceCopy).SequenceEqual(File.ReadAllBytes(unmetOutput.FinalPath)),
+        "正常替换原图时没有保存最小结果或大小错误。");
+
+    // Exercise the real Shell API immediately after both JPEG render paths.
+    // An exclusive read can succeed while an undisposed libvips intermediate
+    // still retains the source mapping and prevents Windows from recycling it.
+    var recycleColourSource = Path.Combine(temporaryRoot, "recycle-colour-source.ppm");
+    WriteNoisePpm(recycleColourSource, 960, 1280);
+    var recycleColourJpeg = await engine.RenderAsync(recycleColourSource, ".jpg", 960, 1280, 95, false, 0, CancellationToken.None);
+    var recycleGraySource = Path.Combine(temporaryRoot, "recycle-gray-source.ppm");
+    WriteGrayPpm(recycleGraySource, 960, 1280);
+    var recycleGrayJpeg = await engine.RenderAsync(recycleGraySource, ".jpg", 960, 1280, 95, false, 0, CancellationToken.None);
+    foreach (var (name, jpeg) in new[] { ("colour", recycleColourJpeg), ("gray", recycleGrayJpeg) })
+    foreach (var targetMinimum in new[] { false, true })
+    {
+        var recycleCopy = Path.Combine(temporaryRoot, $"回收测试 {name}-{targetMinimum}.jpg");
+        File.Copy(jpeg, recycleCopy);
+        var recycleJob = Job(recycleCopy, 960, 1280);
+        var recycleWorkflow = targetMinimum
+            ? TargetUnmetWorkflow(true)
+            : LinearWorkflow(Node("recycle-quality", "Quality", data => data.QualityPercent = 90));
+        var recycleSaveNode = recycleWorkflow.Nodes.Single(node => node.Type == "Output");
+        recycleSaveNode.Data.ReplaceOriginal = true;
+        var recycleOutput = await runner.ExecuteAsync(recycleJob, recycleWorkflow, CancellationToken.None);
+        Require(recycleOutput.Transformed, "真实回收测试没有执行图片处理。");
+        if (targetMinimum)
+            Require(recycleOutput.TargetSizeNotes.Count == 1, "真实回收测试没有经过保留最小结果分支。");
+        recycleJob.ApplyExecutionResult(recycleOutput);
+        var recycled = new ImageOutputWriter().Write(recycleJob, recycleOutput, recycleSaveNode);
+        recycleJob.ApplySavedOutput(recycleOutput, recycled, false);
+        Require(recycled.Replaced && recycled.Warning is null,
+            $"黑白优化后原图仍被占用（{name}，最小结果={targetMinimum}）：{recycled.Warning}");
+        Require(recycleJob.OutputReady && recycleJob.SourceWasReplaced && recycleJob.EstimatedSize == recycleOutput.Size
+            && File.ReadAllBytes(recycleCopy).SequenceEqual(File.ReadAllBytes(recycleOutput.FinalPath)),
+            "真实回收替换没有使用实际处理结果或丢失了输出状态。");
+    }
+
+    var transientRecycle = Path.Combine(temporaryRoot, "transient-recycle.jpg");
+    File.Copy(noisyJpeg, transientRecycle);
+    var transientAttempts = 0;
+    ShellRecycleBin.DeleteFileWithRetry(transientRecycle, path =>
+    {
+        if (++transientAttempts < 3) throw new IOException("模拟短暂回收故障。");
+        File.Delete(path);
+    });
+    Require(transientAttempts == 3 && !File.Exists(transientRecycle), "短暂回收故障没有在重试后恢复。");
+
+    var failedSaveJob = Job(unmetEntry.ExtractedPath, 256, 256);
+    failedSaveJob.ApplyExecutionResult(unmetOutput);
+    var invalidOutputNode = Node("invalid-save", "Output", data =>
+    {
+        data.SameFolder = false;
+        data.OutputDirectory = failedSaveJob.SourcePath; // An existing file cannot be an output directory.
+    });
+    var realSaveFailure = false;
+    try { successfulWriter.Write(failedSaveJob, unmetOutput, invalidOutputNode); }
+    catch (IOException) { realSaveFailure = true; }
+    Require(realSaveFailure && !failedSaveJob.OutputReady && failedSaveJob.EstimatedSize == unmetOutput.Size,
+        "真正保存失败时误报成功，或丢失了已生成结果的实际大小。");
+    Require(File.ReadAllBytes(failedSaveJob.SourcePath).SequenceEqual(unmetOriginalBytes), "保存失败损坏了原图。");
+    using (var userCancellation = new CancellationTokenSource())
+    {
+        userCancellation.Cancel();
+        var userCancelHonored = false;
+        try { await runner.ExecuteAsync(failedSaveJob, saveWorkflow, userCancellation.Token); }
+        catch (OperationCanceledException) when (userCancellation.IsCancellationRequested) { userCancelHonored = true; }
+        Require(userCancelHonored, "真正的工作流取消被错误吞掉。");
+    }
+
     var adoptedArchive = new ArchiveJob
     {
         SourcePath = packedArchive,
@@ -299,7 +510,7 @@ try
     catch (InvalidDataException) { traversalBlocked = true; }
     Require(traversalBlocked && !File.Exists(Path.Combine(temporaryRoot, "escaped.txt")), "ZIP 路径穿越没有被阻止。");
 
-    Console.WriteLine($"ENGINE_SMOKE_OK first={first.Size}B current-size={exactSize.Size}B target-size={targetSized.Size}B target-unmet-skip=true target-unmet-smallest=true target-unmet-retry=true target-unmet-legacy=true sampling=4:4:4 jpg-path-validation=true jpg-pass-through=true replacement-baseline=true recycle-sta=true archive-replacement-baseline=true zip-store=true zip-cleanup-safe=true zip-slip-blocked=true");
+    Console.WriteLine($"ENGINE_SMOKE_OK first={first.Size}B current-size={exactSize.Size}B target-size={targetSized.Size}B target-unmet-skip=true target-unmet-smallest=true target-unmet-retry=true target-unmet-legacy=true sampling=4:4:4 jpg-path-validation=true jpg-pass-through=true replacement-baseline=true recycle-sta=true recycle-after-grayscale=true recycle-abort-fallback=true smallest-output-zip=true incomplete-output-blocked=true archive-replacement-baseline=true zip-store=true zip-cleanup-safe=true zip-slip-blocked=true");
 }
 finally
 {

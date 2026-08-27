@@ -119,6 +119,7 @@ function rebuildPortCache() {
     const direction = element.dataset.direction === 'input' ? 'input' : 'output'
     if (!nodeId || !portId) continue
     const bounds = element.getBoundingClientRect()
+    const offset = portInteractionOffset(nodeId, direction)
     portCache.set(portKey(nodeId, portId, direction), {
       element,
       nodeId,
@@ -126,8 +127,10 @@ function rebuildPortCache() {
       direction,
       kind: element.dataset.kind ?? '',
       point: {
-        x: (bounds.left + bounds.width / 2 - surfaceBounds.left - viewport.x) / viewport.zoom,
-        y: (bounds.top + bounds.height / 2 - surfaceBounds.top - viewport.y) / viewport.zoom
+        // DOM measurements already include the live gesture; cache its baseline
+        // so a layout refresh cannot apply the drag/resize offset a second time.
+        x: (bounds.left + bounds.width / 2 - surfaceBounds.left - viewport.x) / viewport.zoom - offset.x,
+        y: (bounds.top + bounds.height / 2 - surfaceBounds.top - viewport.y) / viewport.zoom - offset.y
       }
     })
   }
@@ -138,12 +141,9 @@ function ensurePortCache() {
   if (portCacheDirty) rebuildPortCache()
 }
 
-function portPoint(nodeId: string, portId: string, direction: 'input' | 'output') {
-  ensurePortCache()
-  const cached = portCache.get(portKey(nodeId, portId, direction))
-  if (!cached) return null
-  let x = cached.point.x
-  let y = cached.point.y
+function portInteractionOffset(nodeId: string, direction: 'input' | 'output'): Point {
+  let x = 0
+  let y = 0
   if (drag?.node.id === nodeId) {
     x += drag.nextX - drag.x
     y += drag.nextY - drag.y
@@ -151,6 +151,14 @@ function portPoint(nodeId: string, portId: string, direction: 'input' | 'output'
   if (resizeDrag?.node.id === nodeId && direction === 'output')
     x += resizeDrag.nextWidth - resizeDrag.width
   return { x, y }
+}
+
+function portPoint(nodeId: string, portId: string, direction: 'input' | 'output') {
+  ensurePortCache()
+  const cached = portCache.get(portKey(nodeId, portId, direction))
+  if (!cached) return null
+  const offset = portInteractionOffset(nodeId, direction)
+  return { x: cached.point.x + offset.x, y: cached.point.y + offset.y }
 }
 
 function worldToClient(point: Point) {
@@ -307,10 +315,10 @@ function flushPointerMove() {
     }
   }
   if (resizeDrag && event.pointerId === resizeDrag.pointerId) {
-    resizeDrag.nextWidth = Math.min(1120, Math.max(570, resizeDrag.width + (event.clientX - resizeDrag.clientX) / viewport.zoom))
-    resizeDrag.nextHeight = Math.min(700, Math.max(290, resizeDrag.height + (event.clientY - resizeDrag.clientY) / viewport.zoom))
-    resizeDrag.element.style.width = `${Math.round(resizeDrag.nextWidth)}px`
-    resizeDrag.element.style.height = `${Math.round(resizeDrag.nextHeight)}px`
+    resizeDrag.nextWidth = Math.round(Math.max(570, resizeDrag.width + (event.clientX - resizeDrag.clientX) / viewport.zoom))
+    resizeDrag.nextHeight = Math.round(Math.min(700, Math.max(290, resizeDrag.height + (event.clientY - resizeDrag.clientY) / viewport.zoom)))
+    resizeDrag.element.style.width = `${resizeDrag.nextWidth}px`
+    resizeDrag.element.style.height = `${resizeDrag.nextHeight}px`
     geometryChanged = true
   }
   if (linking && surface.value) {
@@ -331,9 +339,9 @@ function flushPendingPointer(pointerId: number) {
   flushPointerMove()
 }
 
-function shiftNodePorts(nodeId: string, deltaX: number, deltaY: number, outputOnly = false) {
+function shiftNodePorts(nodeId: string, deltaX: number, deltaY: number) {
   for (const cached of portCache.values()) {
-    if (cached.nodeId !== nodeId || (outputOnly && cached.direction !== 'output')) continue
+    if (cached.nodeId !== nodeId) continue
     cached.point = { x: cached.point.x + deltaX, y: cached.point.y + deltaY }
   }
 }
@@ -366,11 +374,10 @@ function pointerUp(event: PointerEvent) {
   }
   if (resizeDrag && event.pointerId === resizeDrag.pointerId) {
     const completed = resizeDrag
-    shiftNodePorts(completed.node.id, completed.nextWidth - completed.width, 0, true)
     resizeDrag = null
     completed.element.classList.remove('is-resizing')
-    store.updateNodeSize(completed.node.id, Math.round(completed.nextWidth), Math.round(completed.nextHeight))
-    requestDraw()
+    store.updateNodeSize(completed.node.id, completed.nextWidth, completed.nextHeight)
+    invalidatePortLayout()
   }
   if (linking && event.pointerId === linking.pointerId) {
     const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null
@@ -426,7 +433,7 @@ function cancelInteractions(pointerId?: number) {
     cancelled.element.classList.remove('is-resizing')
     cancelled.element.style.width = `${cancelled.width}px`
     cancelled.element.style.height = `${cancelled.height}px`
-    requestDraw()
+    invalidatePortLayout()
   }
   if (linking && matches(linking.pointerId)) {
     linking.snap?.classList.remove('snap-target')

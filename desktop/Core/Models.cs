@@ -91,6 +91,10 @@ public sealed class FileJob
     public string OriginConnectionId { get; set; } = "";
     public List<string> RouteNodeIds { get; set; } = new();
     public List<string> RouteConnectionIds { get; set; } = new();
+    public List<string> TargetSizeNotes { get; set; } = new();
+    public string? OutputWarning { get; set; }
+    [JsonIgnore]
+    internal bool OutputReady { get; set; }
     [JsonIgnore]
     public long CurrentSize { get; set; }
     [JsonIgnore]
@@ -101,6 +105,41 @@ public sealed class FileJob
     public string OriginalSourcePath { get; set; } = "";
     [JsonIgnore]
     public bool SourceWasReplaced { get; set; }
+
+    internal void ApplyExecutionResult(ExecutionResult result)
+    {
+        OutputReady = false;
+        OutputPath = null;
+        OutputWarning = null;
+        TargetFormat = ImageMetadataReader.FormatName(result.FinalPath);
+        TargetWidth = result.Width;
+        TargetHeight = result.Height;
+        EstimatedSize = result.Size;
+        OutputNodeId = result.OutputNodeId;
+        RouteNodeIds = result.RouteNodeIds.ToList();
+        RouteConnectionIds = result.RouteConnectionIds.ToList();
+        TargetSizeNotes = result.TargetSizeNotes.ToList();
+    }
+
+    internal void ApplySavedOutput(ExecutionResult result, ImageOutputResult saved, bool cacheHit)
+    {
+        OutputPath = saved.Path;
+        EstimatedSize = saved.Size;
+        OutputWarning = saved.Warning;
+        Status = saved.Warning is not null
+            ? saved.Replaced ? "已完成 · 保存有提示" : "已完成 · 原图未替换，结果已另存"
+            : saved.Replaced ? "已完成 · 已替换原图" : cacheHit ? "已完成 · 使用预估缓存" : "已完成";
+        if (saved.Replaced)
+        {
+            if (string.IsNullOrWhiteSpace(OriginalSourcePath)) OriginalSourcePath = SourcePath;
+            SourceWasReplaced = true;
+            SourcePath = saved.Path;
+            CurrentSize = saved.Size;
+            CurrentWidth = result.Width;
+            CurrentHeight = result.Height;
+        }
+        OutputReady = true;
+    }
 }
 
 public sealed class ArchiveJob
@@ -150,6 +189,7 @@ internal sealed class ExecutionState
     public HashSet<string> VisitedNodes { get; } = new(StringComparer.OrdinalIgnoreCase);
     public List<string> RouteNodeIds { get; } = new();
     public List<string> RouteConnectionIds { get; } = new();
+    public List<string> TargetSizeNotes { get; } = new();
     public List<string> TemporaryFiles { get; } = new();
 }
 
@@ -163,6 +203,7 @@ internal sealed class ExecutionResult
     public bool Transformed { get; set; }
     public List<string> RouteNodeIds { get; set; } = new();
     public List<string> RouteConnectionIds { get; set; } = new();
+    public List<string> TargetSizeNotes { get; set; } = new();
     public List<string> TemporaryFiles { get; set; } = new();
 }
 
@@ -176,7 +217,34 @@ internal sealed class EstimateCacheEntry
     public int Height { get; set; }
     public List<string> RouteNodeIds { get; set; } = new();
     public List<string> RouteConnectionIds { get; set; } = new();
+    public List<string> TargetSizeNotes { get; set; } = new();
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public static EstimateCacheEntry FromResult(string signature, ExecutionResult result) => new()
+    {
+        Signature = signature,
+        ResultPath = result.FinalPath,
+        OutputNodeId = result.OutputNodeId,
+        Size = result.Size,
+        Width = result.Width,
+        Height = result.Height,
+        RouteNodeIds = result.RouteNodeIds.ToList(),
+        RouteConnectionIds = result.RouteConnectionIds.ToList(),
+        TargetSizeNotes = result.TargetSizeNotes.ToList()
+    };
+
+    public ExecutionResult RestoreResult(string sourcePath) => new()
+    {
+        FinalPath = ResultPath,
+        OutputNodeId = OutputNodeId,
+        Size = Size,
+        Width = Width,
+        Height = Height,
+        RouteNodeIds = RouteNodeIds.ToList(),
+        RouteConnectionIds = RouteConnectionIds.ToList(),
+        TargetSizeNotes = TargetSizeNotes.ToList(),
+        Transformed = !ResultPath.Equals(sourcePath, StringComparison.OrdinalIgnoreCase)
+    };
 }
 
 public sealed class HostRequest

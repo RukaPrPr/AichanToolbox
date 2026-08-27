@@ -1,6 +1,15 @@
 import { defineStore } from 'pinia'
-import { createSettings, defaultWorkflow, makeNode, nodeMeta } from './defaults'
+import { createSettings, defaultWorkflow, makeNode, nodeMeta } from './defaults.ts'
 import type { ArchiveJob, FileJob, NodeType, WorkflowConnection, WorkflowDocument, WorkflowNode, WorkSummary } from './types'
+
+export function workflowExecutionSignature(workflow: WorkflowDocument) {
+  return JSON.stringify({
+    autoGrayscale: workflow.autoGrayscale,
+    nodes: workflow.nodes.map(({ id, type, data }) => ({ id, type, data })).sort((a, b) => a.id.localeCompare(b.id)),
+    connections: workflow.connections.map(({ id, fromNodeId, fromPort, toNodeId, toPort }) => ({ id, fromNodeId, fromPort, toNodeId, toPort }))
+      .sort((a, b) => a.id.localeCompare(b.id))
+  })
+}
 
 export const useAppStore = defineStore('app', {
   state: () => ({
@@ -17,7 +26,7 @@ export const useAppStore = defineStore('app', {
     progress: 0,
     progressTotal: 0,
     status: '准备就绪',
-    version: '8.1.0',
+    version: '8.1.1',
     processorCount: 0
   }),
   getters: {
@@ -26,7 +35,13 @@ export const useAppStore = defineStore('app', {
     archiveCount: state => state.archives.length,
     allChecked: state => state.jobs.length > 0 && state.jobs.every(job => job.checked),
     highlightedNodeIds: state => state.jobs.find(job => job.id === state.highlightedJobId)?.routeNodeIds ?? [],
-    highlightedConnectionIds: state => state.jobs.find(job => job.id === state.highlightedJobId)?.routeConnectionIds ?? []
+    highlightedConnectionIds: state => state.jobs.find(job => job.id === state.highlightedJobId)?.routeConnectionIds ?? [],
+    routeUnavailableReason: state => (job: FileJob) => {
+      if (state.busy) return '任务执行中，完成后可查看路径'
+      if (!job.routeNodeIds?.length) return '暂无路径记录，请先成功预估或运行这张图片'
+      if (!state.routesValid) return '路径记录已失效，请重新预估或运行工作流'
+      return ''
+    }
   },
   actions: {
     replaceWorkflow(workflow: WorkflowDocument) {
@@ -153,16 +168,18 @@ export const useAppStore = defineStore('app', {
     },
     updateNodePosition(id: string, x: number, y: number) {
       const node = this.workflow.nodes.find(value => value.id === id)
-      if (node) { node.x = x; node.y = y; this.invalidateRoutes() }
+      if (node && Number.isFinite(x) && Number.isFinite(y)) { node.x = x; node.y = y }
     },
     updateNodeSize(id: string, width: number, height: number) {
       const node = this.workflow.nodes.find(value => value.id === id)
-      if (node) { node.width = width; node.height = height; this.invalidateRoutes() }
+      if (node && Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+        node.width = width
+        node.height = height
+      }
     },
     showJobRoute(id: string) {
-      if (!this.routesValid) return
       const job = this.jobs.find(value => value.id === id)
-      if (!job?.routeNodeIds?.length) return
+      if (!job || this.routeUnavailableReason(job)) return
       this.highlightedJobId = this.highlightedJobId === id ? null : id
     },
     clearRouteHighlight() {

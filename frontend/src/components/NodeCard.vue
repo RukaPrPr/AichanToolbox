@@ -306,7 +306,7 @@ function descreenRangeStyle(value: number) {
         </div>
         <div class="target-derived"><span>动态预测</span><i />最多 5 次真实编码</div>
         <label class="switch-line target-result-toggle"><input v-model="node.data.targetKeepSmallestOnUnmet" type="checkbox" /><span>未达标时输出最小结果</span></label>
-        <p class="node-hint">达标出口输出 JPG；关闭开关时，未达标出口会丢弃尝试结果并跳过本节点。</p>
+        <p class="node-hint">开启时须连接“未达标”出口，保留最小 JPG 并继续该分支，不计失败；关闭时丢弃尝试并原样传递入口结果。</p>
       </template>
 
       <template v-else-if="node.type === 'Output'">

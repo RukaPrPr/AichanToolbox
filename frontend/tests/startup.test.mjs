@@ -7,6 +7,13 @@ import { setImmediate, setTimeout } from 'node:timers/promises'
 import { test } from 'node:test'
 import { buildProductionHtml } from '../build/html.mjs'
 import { waitForStartupPaint } from '../src/startup.ts'
+import { createPinia, setActivePinia } from 'pinia'
+import { nextTick, watch } from 'vue'
+import * as vue from 'vue'
+import { compileScript, parse } from '@vue/compiler-sfc'
+import ts from 'typescript'
+import * as defaults from '../src/defaults.ts'
+import { useAppStore, workflowExecutionSignature } from '../src/store.ts'
 
 test('production shares early theme restoration and a light default with development', () => {
   const source = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
@@ -297,4 +304,257 @@ test('blur, theme changes and disposal cannot leave a canvas fade timer running'
   clock.advance(1000)
   assert.equal(clock.pendingCount, 0)
   assert.deepEqual(changes, [true, false, true, false, true])
+})
+
+function completedRoute(t) {
+  setActivePinia(createPinia())
+  const store = useAppStore()
+  const node = store.workflow.nodes.find(value => value.type === 'Import')
+  const job = {
+    id: 'completed-route', checked: true, status: '已完成',
+    routeNodeIds: store.workflow.nodes.map(value => value.id),
+    routeConnectionIds: store.workflow.connections.map(value => value.id)
+  }
+  store.setJobs([job])
+  store.setWorkState({ busy: false, mode: 'run', summary: { total: 1, successes: 1, failures: 0, cacheHits: 0, cancelled: false } })
+  store.showJobRoute(job.id)
+  const stop = watch(() => workflowExecutionSignature(store.workflow), () => store.invalidateRoutes())
+  t.after(() => { stop(); store.$dispose() })
+  return { store, node, job }
+}
+
+test('node layout, canvas navigation and display ordering preserve a completed route', async t => {
+  const { store, node, job } = completedRoute(t)
+  const signature = workflowExecutionSignature(store.workflow)
+  store.updateNodePosition(node.id, node.x + 40, node.y + 20)
+  store.updateNodeSize(node.id, 2400, 500)
+  store.workflow.viewport = { x: 240, y: -80, zoom: .5 }
+  node.title = '文件列表'
+  store.workflow.nodes.reverse()
+  store.workflow.connections.reverse()
+  await nextTick()
+  assert.equal(workflowExecutionSignature(store.workflow), signature)
+  assert.equal(store.routesValid, true)
+  assert.equal(store.highlightedJobId, job.id)
+  assert.deepEqual(store.highlightedConnectionIds, job.routeConnectionIds)
+})
+
+test('processing settings invalidate the completed route while leaving its record available for explanation', async t => {
+  const { store, job } = completedRoute(t)
+  store.workflow.nodes.find(node => node.type === 'Quality').data.qualityPercent = 60
+  await nextTick()
+  assert.equal(store.routesValid, false)
+  assert.equal(store.highlightedJobId, null)
+  assert.ok(job.routeNodeIds.length)
+  assert.match(store.routeUnavailableReason(job), /已失效/)
+  store.showJobRoute(job.id)
+  assert.equal(store.highlightedJobId, null)
+})
+
+test('recreating an otherwise identical connection invalidates old route identifiers', async t => {
+  const { store } = completedRoute(t)
+  store.workflow.connections[0].id = 'replacement-connection'
+  await nextTick()
+  assert.equal(store.routesValid, false)
+  assert.equal(store.highlightedJobId, null)
+})
+
+test('route availability explains missing records and running work and prevents stale activation', t => {
+  const { store, job } = completedRoute(t)
+  assert.equal(store.routeUnavailableReason(job), '')
+  assert.match(store.routeUnavailableReason({ ...job, routeNodeIds: [] }), /暂无路径记录/)
+  store.setWorkState({ busy: true, mode: 'run', total: 1 })
+  assert.match(store.routeUnavailableReason(job), /执行中/)
+  store.showJobRoute(job.id)
+  assert.equal(store.highlightedJobId, null)
+})
+
+test('a file-list node wider than the old limit survives saving and reloading without accepting invalid dimensions', t => {
+  const { store, node } = completedRoute(t)
+  store.updateNodeSize(node.id, 3200, 500)
+  store.updateNodeSize(node.id, Number.POSITIVE_INFINITY, 500)
+  store.updateNodeSize(node.id, 100, Number.NaN)
+  assert.equal(node.width, 3200)
+  const saved = JSON.parse(JSON.stringify(store.workflow))
+  store.replaceWorkflow(saved)
+  const restored = store.workflow.nodes.find(value => value.id === node.id)
+  assert.equal(restored.width, 3200)
+  assert.equal(restored.height, 500)
+  assert.equal(store.routesValid, false)
+})
+
+// Exercise the real canvas handlers and renderer inputs with measured DOM geometry.
+// Rebuilding the port cache between pointer frames reproduces a layout notification
+// arriving while a node is being resized, without depending on browser timing.
+const canvasScript = compileScript(parse(readFileSync(new URL('../src/components/WorkflowCanvas.vue', import.meta.url), 'utf8')).descriptor, { id: 'canvas-regression' })
+const canvasModule = ts.transpileModule(canvasScript.content, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+}).outputText
+
+async function canvasGeometryFixture(t, zoom) {
+  setActivePinia(createPinia())
+  const store = useAppStore()
+  const node = defaults.makeNode('Import', 20, 30)
+  const output = defaults.makeNode('Output', 1300, 430)
+  node.width = 1000
+  const view = { x: 40, y: 25, zoom }
+  store.replaceWorkflow({ ...store.workflow, nodes: [node, output], viewport: view, connections: [
+    { id: 'geometry-edge', fromNodeId: node.id, fromPort: 'out', toNodeId: output.id, toPort: 'in' }
+  ] })
+  const imported = store.workflow.nodes[0]
+  const classList = () => {
+    const values = new Set()
+    return { add: value => values.add(value), remove: value => values.delete(value), contains: value => values.has(value) }
+  }
+  const style = () => ({ setProperty(key, value) { this[key] = value } })
+  const bounds = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height })
+  const surfaceBounds = bounds(218, 66, 1280, 720)
+  const elements = new Map(store.workflow.nodes.map(value => {
+    const element = vue.markRaw({
+      classList: classList(), style: style(),
+      get offsetWidth() { return Math.round(Number.parseFloat(this.style.width) || value.width) },
+      get offsetHeight() { return Math.round(Number.parseFloat(this.style.height) || value.height) },
+      getBoundingClientRect() {
+        const x = Number.parseFloat(this.style['--node-x'] ?? value.x) + Number.parseFloat(this.style['--node-drag-x'] ?? '0')
+        const y = Number.parseFloat(this.style['--node-y'] ?? value.y) + Number.parseFloat(this.style['--node-drag-y'] ?? '0')
+        return bounds(surfaceBounds.left + view.x + x * zoom, surfaceBounds.top + view.y + y * zoom, this.offsetWidth * zoom, this.offsetHeight * zoom)
+      }
+    })
+    return [value.id, element]
+  }))
+  const ports = store.workflow.nodes.flatMap(value => ['input', 'output'].map(direction => vue.markRaw({
+    dataset: { node: value.id, port: direction === 'input' ? 'in' : 'out', direction, kind: 'image' },
+    getBoundingClientRect() {
+      const rect = elements.get(value.id).getBoundingClientRect()
+      const x = direction === 'input' ? rect.left + zoom : rect.right - zoom
+      return bounds(x - 14 * zoom, rect.top + 73 * zoom, 28 * zoom, 28 * zoom)
+    }
+  })))
+  const frames = new Map()
+  const mounted = []
+  const cleanup = []
+  let nextFrame = 0
+  let rendered = []
+  const module = { exports: {} }
+  runInNewContext(canvasModule, {
+    module, exports: module.exports,
+    require(name) {
+      if (name === 'vue') return { ...vue, onMounted: callback => mounted.push(callback), onBeforeUnmount: callback => cleanup.push(callback), watch: (...args) => { const stop = vue.watch(...args); cleanup.push(stop); return stop } }
+      if (name === '../store') return { useAppStore: () => store }
+      if (name === '../defaults') return defaults
+      if (name === '../canvasActivity') return { createCanvasActivity }
+      if (name === '../bridge') return { callHost: async () => null }
+      if (name === '../renderers/WebGlConnectionRenderer') return { WebGlConnectionRenderer: class {
+        resize() {}
+        render(curves) { rendered = curves }
+        dispose() {}
+      } }
+      if (name.endsWith('.vue')) return {}
+      throw new Error(`Unexpected canvas import: ${name}`)
+    },
+    window: { addEventListener() {}, removeEventListener() {} },
+    document: { body: { classList: classList() } },
+    ResizeObserver: class { observe() {} disconnect() {} },
+    requestAnimationFrame: callback => { frames.set(++nextFrame, callback); return nextFrame },
+    cancelAnimationFrame: id => frames.delete(id)
+  })
+  const canvas = module.exports.default.setup({}, { expose() {} })
+  canvas.surface.value = vue.markRaw({
+    clientWidth: surfaceBounds.width, clientHeight: surfaceBounds.height, classList: classList(),
+    getBoundingClientRect: () => surfaceBounds,
+    querySelectorAll: () => ports,
+    querySelector: selector => elements.get(selector.match(/data-node-id="([^"]+)"/)?.[1])
+  })
+  canvas.pane.value = vue.markRaw({ style: style() })
+  canvas.connectionCanvas.value = vue.markRaw({})
+  for (const callback of mounted) await callback()
+  const flush = () => {
+    while (frames.size) {
+      const [id, callback] = frames.entries().next().value
+      frames.delete(id)
+      callback()
+    }
+  }
+  const checkEndpoints = () => {
+    const curve = rendered.find(value => value.connectionId === 'geometry-edge')
+    for (const [point, id, direction] of [[curve.start, imported.id, 'output'], [curve.end, output.id, 'input']]) {
+      const rect = ports.find(port => port.dataset.node === id && port.dataset.direction === direction).getBoundingClientRect()
+      const expectedX = (rect.left + rect.width / 2 - surfaceBounds.left - view.x) / zoom
+      const expectedY = (rect.top + rect.height / 2 - surfaceBounds.top - view.y) / zoom
+      assert.ok(Math.abs(point.x - expectedX) < 1e-6, `${direction} port detached horizontally: ${point.x} vs ${expectedX} at zoom ${zoom}`)
+      assert.ok(Math.abs(point.y - expectedY) < 1e-6, `${direction} port detached vertically: ${point.y} vs ${expectedY} at zoom ${zoom}`)
+    }
+  }
+  flush()
+  checkEndpoints()
+  t.after(() => { for (const callback of cleanup) callback(); store.$dispose() })
+  const pointer = delta => ({ pointerId: 1, button: 0, clientX: 500 + delta, clientY: 300, preventDefault() {} })
+  return { canvas, node: imported, flush, checkEndpoints, pointer }
+}
+
+test('rebuilding port measurements during a resize does not double the width delta, including on release', async t => {
+  for (const zoom of [.3, .65, 1, 1.25, 2]) {
+    const { canvas, node, flush, checkEndpoints, pointer } = await canvasGeometryFixture(t, zoom)
+    canvas.resizeDown(node, pointer(0))
+    canvas.pointerMove(pointer(240 * zoom))
+    flush()
+    checkEndpoints()
+    canvas.invalidatePortLayout()
+    flush()
+    checkEndpoints()
+    canvas.pointerUp(pointer(240 * zoom))
+    await nextTick()
+    flush()
+    checkEndpoints()
+  }
+})
+
+test('resizing cancellation restores the original port after a mid-drag layout refresh', async t => {
+  const { canvas, node, flush, checkEndpoints, pointer } = await canvasGeometryFixture(t, .5)
+  canvas.resizeDown(node, pointer(0))
+  canvas.pointerMove(pointer(160))
+  flush()
+  canvas.invalidatePortLayout()
+  flush()
+  canvas.pointerCancel(pointer(160))
+  flush()
+  assert.equal(node.width, 1000)
+  checkEndpoints()
+})
+
+test('repeated wide and narrow resizes use the same rounded geometry for the node and connections', async t => {
+  const { canvas, node, flush, checkEndpoints, pointer } = await canvasGeometryFixture(t, .65)
+  for (const delta of [160.2, 180.4, -85.1, 120.3, -57.6]) {
+    canvas.resizeDown(node, pointer(0))
+    canvas.pointerMove(pointer(delta))
+    flush()
+    checkEndpoints()
+    canvas.pointerUp(pointer(delta))
+    await nextTick()
+    flush()
+    checkEndpoints()
+  }
+  assert.ok(node.width > 1120)
+})
+
+test('refreshing port measurements during a node move also preserves release and cancellation coordinates', async t => {
+  const { canvas, node, flush, checkEndpoints, pointer } = await canvasGeometryFixture(t, .5)
+  const movedPointer = { ...pointer(60), clientY: 330 }
+  canvas.headerDown(node, pointer(0))
+  canvas.pointerMove(movedPointer)
+  flush()
+  canvas.invalidatePortLayout()
+  flush()
+  checkEndpoints()
+  canvas.pointerCancel(movedPointer)
+  flush()
+  checkEndpoints()
+  canvas.headerDown(node, pointer(0))
+  canvas.pointerMove(movedPointer)
+  canvas.pointerUp(movedPointer)
+  await nextTick()
+  flush()
+  assert.equal(node.x, 140)
+  assert.equal(node.y, 90)
+  checkEndpoints()
 })
