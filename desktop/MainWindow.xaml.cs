@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     private const int DwmColorNone = unchecked((int)0xFFFFFFFE);
 
     private readonly string[] _arguments;
+    private readonly AppearanceSettings _appearance;
     private DesktopBridge? _bridge;
     private HwndSource? _windowSource;
     private StartupWindow? _startupWindow;
@@ -37,10 +38,16 @@ public partial class MainWindow : Window
     private bool _closed;
     private readonly TaskCompletionSource<bool> _frontendReadySignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public MainWindow(string[] arguments)
+    public MainWindow(string[] arguments) : this(arguments, new AppearanceSettings())
+    {
+    }
+
+    internal MainWindow(string[] arguments, AppearanceSettings appearance)
     {
         _arguments = arguments;
+        _appearance = appearance;
         InitializeComponent();
+        ApplyTheme(_appearance.Current);
         ApplyRequestedWindowSize();
         SourceInitialized += OnSourceInitialized;
         Loaded += async (_, _) => await InitializeBrowserAsync();
@@ -63,7 +70,7 @@ public partial class MainWindow : Window
         var handle = new WindowInteropHelper(this).Handle;
         _windowSource = HwndSource.FromHwnd(handle);
         if (_windowSource?.CompositionTarget is { } target)
-            target.BackgroundColor = Color.FromRgb(0xEE, 0xF1, 0xF4);
+            target.BackgroundColor = _appearance.Current.SurfaceColor;
         _windowSource?.AddHook(WindowMessageHook);
         ApplyNativeWindowFrame();
     }
@@ -76,6 +83,25 @@ public partial class MainWindow : Window
         _windowSource?.RemoveHook(WindowMessageHook);
         _windowSource = null;
         _bridge?.Dispose();
+    }
+
+    private void ApplyTheme(ThemeSelection selection)
+    {
+        if (!selection.IsValid) throw new ArgumentException("无效的主题设置。", nameof(selection));
+        var color = selection.SurfaceColor;
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        Background = brush;
+        BrowserHost.Background = brush;
+        Browser.DefaultBackgroundColor = System.Drawing.Color.FromArgb(color.R, color.G, color.B);
+        if (_windowSource?.CompositionTarget is { } target) target.BackgroundColor = color;
+    }
+
+    internal void SetTheme(ThemeSelection selection)
+    {
+        if (_closed) return;
+        ApplyTheme(selection);
+        _appearance.Save(selection);
     }
 
     private IntPtr WindowMessageHook(IntPtr window, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -198,7 +224,10 @@ public partial class MainWindow : Window
                 webRoot,
                 CoreWebView2HostResourceAccessKind.DenyCors);
 
-            _bridge = new DesktopBridge(this, Browser, BeginWindowDrag, BeginWindowResize, RevealFrontend);
+            _bridge = new DesktopBridge(this, Browser,
+                () => QueueWindowInteraction(BeginWindowDrag),
+                edge => QueueWindowInteraction(() => BeginWindowResize(edge)),
+                RevealFrontend, _appearance, SetTheme);
             StartupTelemetry.Mark("bridge.constructed");
             Browser.CoreWebView2.WebMessageReceived += _bridge.Receive;
             Browser.CoreWebView2.NavigationStarting += (_, args) =>
@@ -286,6 +315,17 @@ public partial class MainWindow : Window
         _startupWindow = null;
         if (startup is null) return;
         try { startup.Close(); } catch (InvalidOperationException) { }
+    }
+
+    private void QueueWindowInteraction(Action interaction)
+    {
+        if (_closed) return;
+        // Native move/resize starts a modal message loop. Let WebMessageReceived
+        // return before entering it so WebView2 callbacks cannot be reentered.
+        Dispatcher.BeginInvoke(DispatcherPriority.Normal, new Action(() =>
+        {
+            if (!_closed) interaction();
+        }));
     }
 
     private void BeginWindowDrag()

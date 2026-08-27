@@ -45,7 +45,8 @@ function compileConstants() {
 }
 
 function staticAssets() {
-  const stylePath = path.resolve('src/styles.css')
+  const publicRoot = path.resolve('public')
+  const stylePaths = ['src/styles.css', 'src/themes.css'].map(file => path.resolve(file))
   const iconPath = path.resolve('../desktop/Assets/aichan-windows.ico')
   const programLogoPath = path.resolve('../desktop/Assets/aichan-startup.png')
   const dragCursorPath = path.resolve('src/cursors/aichan-drag-cursor.png')
@@ -60,11 +61,23 @@ function staticAssets() {
       fs.rmSync(outputRoot, { recursive: true, force: true })
     },
     load(id) {
-      if (path.resolve(id) === stylePath) return 'export default undefined'
+      if (stylePaths.includes(path.resolve(id))) return 'export default undefined'
       return null
     },
     generateBundle() {
-      this.emitFile({ type: 'asset', fileName: 'styles.css', source: fs.readFileSync(stylePath, 'utf8') })
+      // Match Vite's public/ convention, including future theme assets.
+      const emitPublic = (directory, prefix = '') => {
+        if (!fs.existsSync(directory)) return
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+          if (entry.isSymbolicLink()) throw new Error(`Public assets must not be symlinks: ${entry.name}`)
+          const file = path.join(directory, entry.name)
+          const fileName = `${prefix}${entry.name}`
+          if (entry.isDirectory()) emitPublic(file, `${fileName}/`)
+          else if (entry.isFile()) this.emitFile({ type: 'asset', fileName, source: fs.readFileSync(file) })
+        }
+      }
+      emitPublic(publicRoot)
+      this.emitFile({ type: 'asset', fileName: 'styles.css', source: stylePaths.map(file => fs.readFileSync(file, 'utf8')).join('\n') })
       this.emitFile({ type: 'asset', fileName: 'aichan.ico', source: fs.readFileSync(iconPath) })
       this.emitFile({ type: 'asset', fileName: 'aichan-program.png', source: fs.readFileSync(programLogoPath) })
       this.emitFile({ type: 'asset', fileName: 'cursors/aichan-drag-cursor.png', source: fs.readFileSync(dragCursorPath) })

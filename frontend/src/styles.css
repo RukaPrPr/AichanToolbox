@@ -21,10 +21,13 @@ button:disabled { opacity: .42; cursor: default !important; }
 
 .app-shell {
   --node-library-width: 218px;
+  --app-header-height: 66px;
+  --app-statusbar-height: 34px;
+  --sidebar-drawer-gap: 14px;
   position: relative;
   display: grid;
   grid-template-columns: var(--node-library-width) 1fr;
-  grid-template-rows: 66px minmax(0, 1fr) 34px;
+  grid-template-rows: var(--app-header-height) minmax(0, 1fr) var(--app-statusbar-height);
   min-width: 0; min-height: 0;
   width: 100%; height: 100%;
   overflow: hidden;
@@ -56,7 +59,7 @@ button:disabled { opacity: .42; cursor: default !important; }
   grid-column: 1 / -1;
   display: flex; align-items: center;
   min-width: 0;
-  height: 66px;
+  height: var(--app-header-height);
   border-width: 0 0 1px;
   background: linear-gradient(90deg, rgba(27, 33, 47, .91), rgba(25, 29, 42, .82));
 }
@@ -113,8 +116,10 @@ button:disabled { opacity: .42; cursor: default !important; }
 .sidebar-host{position:relative;z-index:20;grid-column:1;grid-row:2;min-height:0}
 .sidebar-responsive-morphing .sidebar-host{opacity:0;pointer-events:none!important}
 .sidebar-morph-ghost{position:fixed;z-index:1200;box-sizing:border-box;pointer-events:none;border:1px solid rgba(104,114,130,.2);background:linear-gradient(145deg,rgba(255,255,255,.9),rgba(231,234,239,.82));box-shadow:inset 0 1px rgba(255,255,255,.96),0 20px 55px rgba(48,55,65,.16);backdrop-filter:blur(26px) saturate(125%);will-change:left,top,width,height,border-radius}
-.sidebar { position: relative; width:100%; height:100%; min-height:0; padding: 14px 12px 12px; border-width: 0 1px 0 0; overflow: auto; overscroll-behavior:contain; background: linear-gradient(180deg, rgba(29,35,49,.82), rgba(20,25,36,.78)); }
-.sidebar::-webkit-scrollbar { width: 4px; }.sidebar::-webkit-scrollbar-thumb { background: rgba(144,162,196,.22); border-radius: 9px; }
+/* Keep the panel and theme ornaments fixed; only its content scrolls. */
+.sidebar { position: relative; width:100%; height:100%; min-height:0; border-width: 0 1px 0 0; overflow:hidden; background: linear-gradient(180deg, rgba(29,35,49,.82), rgba(20,25,36,.78)); }
+.sidebar-scroll { width:100%; height:100%; min-height:0; padding:14px 12px 12px; overflow:auto; overscroll-behavior:contain; }
+.sidebar-scroll::-webkit-scrollbar { width: 4px; }.sidebar-scroll::-webkit-scrollbar-thumb { background: rgba(144,162,196,.22); border-radius: 9px; }
 .sidebar-heading { display: flex; align-items: center; justify-content: space-between; padding: 3px 3px 13px; }
 .sidebar-heading-actions{display:flex;align-items:center;gap:6px}
 .sidebar-toggle,.sidebar-close,.sidebar-drawer-scrim{display:none}
@@ -232,7 +237,7 @@ body.node-dragging,body.node-dragging * { cursor:url("./cursors/aichan-drag-curs
 /* Keep one stable geometry throughout the complete single-row tier.  The old
    1400px helper breakpoint changed gaps and widths without changing tier, which
    made the toolbar appear to jump while the window was being resized. */
-@media (min-width:1180px) {
+@media (min-width:1220px) {
   .brand{width:235px;padding-left:14px}
   .toolbar,.toolbar-group{gap:4px}
   .toolbar-button{min-width:50px;padding-inline:7px}
@@ -249,8 +254,8 @@ body.node-dragging,body.node-dragging * { cursor:url("./cursors/aichan-drag-curs
   .status-summary span:last-child{display:none}
 }
 
-.app-shell.header-stacked{grid-template-columns:minmax(0,1fr);grid-template-rows:108px minmax(0,1fr) 34px}
-.header-stacked .topbar{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:54px 54px;height:108px;align-items:center}
+.app-shell.header-stacked{--app-header-height:108px;--sidebar-toggle-top:62px;grid-template-columns:minmax(0,1fr)}
+.header-stacked .topbar{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:54px 54px;align-items:center}
 .header-stacked .brand{grid-column:1;grid-row:1;width:235px;padding-left:14px}
 .header-stacked .window-controls{grid-column:2;grid-row:1;height:54px;margin-left:0}.header-stacked .window-controls button{height:54px}
 .header-stacked .toolbar{display:contents}
@@ -258,13 +263,13 @@ body.node-dragging,body.node-dragging * { cursor:url("./cursors/aichan-drag-curs
 .header-stacked .toolbar-secondary{grid-column:1/-1;grid-row:2;align-self:stretch;justify-self:end;justify-content:flex-end;padding:6px 12px 8px;gap:4px}
 .header-stacked .toolbar-divider{display:none}.header-stacked .toolbar-button{height:32px;min-width:48px;padding:0 7px}.header-stacked .profile-tools{gap:3px}.header-stacked .profile-select{width:126px}.header-stacked .profile-save{min-width:48px}.header-stacked .profile-tools .icon-only,.header-stacked .toolbar-secondary>.icon-only{min-width:34px;width:34px}.header-stacked .compact-field{gap:4px;height:32px;padding-left:4px}.header-stacked .parallel-select{width:42px}.header-stacked .cache-toggle{gap:4px;height:32px;padding:0 3px;font-size:11px}.header-stacked .toolbar-button.estimate{min-width:96px}.header-stacked .run-button{height:32px;min-width:112px;padding:0 12px}
 .header-stacked .workflow-surface{grid-column:1;grid-row:2}
-.header-stacked .sidebar-drawer-scrim{position:absolute;z-index:61;left:0;right:0;top:108px;bottom:34px;display:block;border:0;background:rgba(222,226,232,.16);opacity:0;pointer-events:none;transition:opacity .18s;backdrop-filter:blur(1px)}.header-stacked .sidebar-drawer-scrim.visible{opacity:1;pointer-events:auto}
-.header-stacked .sidebar-host{position:absolute;z-index:70;grid-column:auto;grid-row:auto;left:14px;top:62px;bottom:46px;width:var(--node-library-width);min-height:0;pointer-events:none}
+.header-stacked .sidebar-drawer-scrim{position:absolute;z-index:61;left:0;right:0;top:var(--app-header-height);bottom:var(--app-statusbar-height);display:block;border:0;background:rgba(222,226,232,.16);opacity:0;pointer-events:none;transition:opacity .18s;backdrop-filter:blur(1px)}.header-stacked .sidebar-drawer-scrim.visible{opacity:1;pointer-events:auto}
+.header-stacked .sidebar-host{position:absolute;z-index:70;grid-column:auto;grid-row:auto;left:var(--sidebar-drawer-gap);top:var(--sidebar-toggle-top);bottom:calc(var(--app-statusbar-height) + var(--sidebar-drawer-gap));width:var(--node-library-width);min-height:0;pointer-events:none}
 .header-stacked .sidebar-toggle{position:absolute;z-index:2;left:0;top:0;display:flex;align-items:center;width:100%;height:38px;padding:0 12px;border:1px solid rgba(104,114,130,.2);border-radius:12px;color:#5f65c7;pointer-events:auto;cursor:pointer;opacity:1;transform:translateZ(0);transition:border-color .18s,background .18s,box-shadow .18s}.header-stacked .sidebar-toggle:hover,.header-stacked .sidebar-toggle.active{border-color:rgba(112,111,203,.42);background:linear-gradient(145deg,rgba(255,255,255,.95),rgba(231,230,246,.88));box-shadow:inset 0 1px rgba(255,255,255,.96),0 8px 22px rgba(66,70,91,.1)}.header-stacked .sidebar-toggle svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.header-stacked .sidebar-toggle-icon{flex:none;width:19px;height:19px;margin-right:9px}.header-stacked .sidebar-toggle span{flex:1;text-align:left;color:#3d4551;font-size:11px;font-weight:620}.header-stacked .sidebar-toggle-chevron{flex:none;width:10px;height:7px;transition:transform .22s cubic-bezier(.22,.78,.24,1)}.header-stacked .sidebar-toggle.active .sidebar-toggle-chevron{transform:rotate(180deg)}
-.header-stacked .sidebar{position:absolute;z-index:1;left:0;right:0;top:45px;bottom:0;width:100%;height:auto;padding:14px 12px 12px;border:1px solid rgba(104,114,130,.2);border-radius:17px;opacity:0;pointer-events:none;clip-path:inset(0 0 100% 0 round 17px);transform:translateY(-7px);transition:clip-path .24s cubic-bezier(.22,.78,.24,1),opacity .15s ease,transform .24s cubic-bezier(.22,.78,.24,1);box-shadow:inset 0 1px rgba(255,255,255,.94),0 20px 55px rgba(48,55,65,.18);backdrop-filter:blur(28px) saturate(125%)}
-.header-stacked .sidebar>*{opacity:0;transform:translateY(-5px);transition:opacity .14s ease,transform .2s ease}.header-stacked .sidebar.drawer-open{opacity:1;pointer-events:auto;clip-path:inset(0 round 17px);transform:translateY(0)}.header-stacked .sidebar.drawer-open>*{opacity:1;transform:translateY(0);transition-delay:.05s}.header-stacked .sidebar-host.drawer-open{pointer-events:auto}
+.header-stacked .sidebar{position:absolute;z-index:1;left:0;right:0;top:calc(var(--app-header-height) + var(--sidebar-drawer-gap) - var(--sidebar-toggle-top));bottom:0;width:100%;height:auto;border:1px solid rgba(104,114,130,.2);border-radius:17px;opacity:0;pointer-events:none;clip-path:inset(0 0 100% 0 round 17px);transform:translateY(-7px);transition:clip-path .24s cubic-bezier(.22,.78,.24,1),opacity .15s ease,transform .24s cubic-bezier(.22,.78,.24,1);box-shadow:inset 0 1px rgba(255,255,255,.94),0 20px 55px rgba(48,55,65,.18);backdrop-filter:blur(28px) saturate(125%)}
+.header-stacked .sidebar-scroll>*{opacity:0;transform:translateY(-5px);transition:opacity .14s ease,transform .2s ease}.header-stacked .sidebar.drawer-open{opacity:1;pointer-events:auto;clip-path:inset(0 round 17px);transform:translateY(0)}.header-stacked .sidebar.drawer-open>.sidebar-scroll>*{opacity:1;transform:translateY(0);transition-delay:.05s}.header-stacked .sidebar-host.drawer-open{pointer-events:auto}
 .header-stacked .sidebar-close{display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid rgba(95,105,120,.14);border-radius:9px;color:#737d8b;background:rgba(255,255,255,.48);cursor:pointer;font-size:18px;line-height:1}.header-stacked .sidebar-close:hover{color:#a45b6d;border-color:rgba(185,92,114,.25);background:rgba(197,105,127,.09)}
-.header-stacked .file-drop-overlay{inset:108px 0 34px 0}.header-stacked .status-summary span:last-child{display:none}
+.header-stacked .file-drop-overlay{inset:var(--app-header-height) 0 var(--app-statusbar-height) 0}.header-stacked .status-summary span:last-child{display:none}
 
 @media (max-width:899px) {
   .status-summary span:nth-last-child(-n+2){display:none}
@@ -345,7 +350,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { border-color: 
   background:linear-gradient(180deg,rgba(248,249,251,.78),rgba(232,235,239,.7));
   box-shadow:8px 0 30px rgba(53,60,70,.045);
 }
-.sidebar::-webkit-scrollbar-thumb { background:rgba(104,113,128,.2); }
+.sidebar-scroll::-webkit-scrollbar-thumb { background:rgba(104,113,128,.2); }
 .sidebar-heading span,.node-group h3 { color:#7c8592; }.sidebar-heading h2 { color:#303640; }
 .clear-button { color:#aa6676;border-color:rgba(190,103,122,.19);background:rgba(205,119,138,.08);box-shadow:none; }
 .clear-button:hover:not(:disabled) { color:#954e60;border-color:rgba(190,95,117,.34);background:rgba(205,119,138,.13); }

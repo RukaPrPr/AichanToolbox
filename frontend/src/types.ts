@@ -108,6 +108,7 @@ export interface ArchiveJob {
 
 export interface StartupSnapshot {
   version: string
+  theme?: string
   processorCount: number
   jobs: FileJob[]
   archives: ArchiveJob[]

@@ -1,4 +1,4 @@
-// Rollup and Vite share one light-first HTML shell. Do not duplicate its theme here.
+// Rollup and Vite share the same early theme restoration and HTML shell.
 export function buildProductionHtml(template) {
   const entry = /<script\s+type="module"\s+src="\/src\/main\.ts"><\/script>/g
   if ([...template.matchAll(entry)].length !== 1 || !template.includes('</head>')) {

@@ -68,7 +68,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outsidePointer
       :disabled="disabled"
       @click="toggle"
     >
-      <span>{{ selectedLabel }}</span>
+      <slot name="value" :selected-label="selectedLabel"><span>{{ selectedLabel }}</span></slot>
       <svg viewBox="0 0 12 8" aria-hidden="true"><path d="M1.5 1.5 6 6l4.5-4.5" /></svg>
     </button>
     <Transition name="select-pop">

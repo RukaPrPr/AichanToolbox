@@ -9,7 +9,7 @@
     <AssemblyName>AichanToolbox</AssemblyName>
     <RootNamespace>AichanToolbox</RootNamespace>
     <ApplicationIcon>Assets\aichan-windows.ico</ApplicationIcon>
-    <Version>8.0.2</Version>
+    <Version>8.1.0</Version>
     <Authors>OpenAI Codex</Authors>
     <Company>OpenAI Codex</Company>
     <Product>艾酱图片工具箱</Product>
@@ -27,6 +27,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="AichanToolbox.EngineSmoke" />
     <InternalsVisibleTo Include="AichanToolbox.TargetSizeProbe" />
+    <InternalsVisibleTo Include="AichanToolbox.StartupSmoke" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
     <PackageReference Include="NetVips" Version="3.2.0" />
     <PackageReference Include="NetVips.Native.win-x64" Version="8.18.5" />

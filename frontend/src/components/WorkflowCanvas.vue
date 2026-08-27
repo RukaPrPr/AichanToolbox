@@ -1,18 +1,24 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { callHost } from '../bridge'
+import { createCanvasActivity } from '../canvasActivity'
 import { canConnect, outputPorts } from '../defaults'
 import { WebGlConnectionRenderer } from '../renderers/WebGlConnectionRenderer'
 import { useAppStore } from '../store'
 import type { PortDefinition, WorkflowConnection, WorkflowNode } from '../types'
+import type { ThemeArtwork } from '../theme'
+import CanvasArtwork from './CanvasArtwork.vue'
 import NodeCard from './NodeCard.vue'
 
+const props = defineProps<{ artwork?: Readonly<ThemeArtwork> }>()
 const store = useAppStore()
 const surface = ref<HTMLElement>()
 const gridLayer = ref<HTMLElement>()
 const pane = ref<HTMLElement>()
 const connectionCanvas = ref<HTMLCanvasElement>()
 const zoomText = ref('100%')
+const artworkActive = ref(false)
+const artworkActivity = createCanvasActivity(active => { artworkActive.value = active })
 
 type Point = { x: number; y: number }
 type CachedPort = { element: HTMLElement; nodeId: string; portId: string; direction: 'input' | 'output'; kind: string; point: Point }
@@ -34,6 +40,14 @@ let resizeDrag: { node: WorkflowNode; element: HTMLElement; pointerId: number; c
 let linking: { node: WorkflowNode; port: PortDefinition; pointerId: number; x: number; y: number; snap: HTMLElement | null } | null = null
 const snapRadius = 46
 const dragActivationDistanceSquared = 9
+
+function syncArtworkInteraction() {
+  artworkActivity.hold(Boolean(props.artwork && (pan || drag?.activated || resizeDrag || linking)))
+}
+
+function pulseArtwork() {
+  if (props.artwork) artworkActivity.pulse()
+}
 
 function applyViewport(commit = false) {
   if (!pane.value || !surface.value) return
@@ -209,6 +223,7 @@ function surfaceDown(event: PointerEvent) {
   pan = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, x: viewport.x, y: viewport.y }
   surface.value?.setPointerCapture(event.pointerId)
   surface.value?.classList.add('is-panning')
+  syncArtworkInteraction()
 }
 
 function headerDown(node: WorkflowNode, event: PointerEvent) {
@@ -250,6 +265,7 @@ function resizeDown(node: WorkflowNode, event: PointerEvent) {
     nextHeight: element.offsetHeight
   }
   element.classList.add('is-resizing')
+  syncArtworkInteraction()
   requestDraw()
 }
 
@@ -280,6 +296,7 @@ function flushPointerMove() {
       drag.activated = true
       drag.element.classList.add('is-dragging')
       document.body.classList.add('node-dragging')
+      syncArtworkInteraction()
     }
     if (drag.activated) {
       drag.nextX = drag.x + clientDeltaX / viewport.zoom
@@ -377,6 +394,7 @@ function pointerUp(event: PointerEvent) {
     document.body.classList.remove('linking')
     requestDraw()
   }
+  syncArtworkInteraction()
 }
 
 function cancelInteractions(pointerId?: number) {
@@ -416,6 +434,7 @@ function cancelInteractions(pointerId?: number) {
     document.body.classList.remove('linking')
     requestDraw()
   }
+  syncArtworkInteraction()
 }
 
 function pointerCancel(event: PointerEvent) {
@@ -424,6 +443,7 @@ function pointerCancel(event: PointerEvent) {
 
 function windowBlur() {
   cancelInteractions()
+  artworkActivity.reset()
 }
 
 function outputDown(node: WorkflowNode, port: PortDefinition, event: PointerEvent) {
@@ -433,12 +453,14 @@ function outputDown(node: WorkflowNode, port: PortDefinition, event: PointerEven
   if (!point) return
   linking = { node, port, pointerId: event.pointerId, x: point.x, y: point.y, snap: null }
   document.body.classList.add('linking')
+  syncArtworkInteraction()
   requestDraw()
 }
 
 function wheel(event: WheelEvent) {
   if (!surface.value) return
   event.preventDefault()
+  pulseArtwork()
   const bounds = surface.value.getBoundingClientRect()
   const cursorX = event.clientX - bounds.left
   const cursorY = event.clientY - bounds.top
@@ -455,6 +477,7 @@ function wheel(event: WheelEvent) {
 
 function setZoom(next: number) {
   if (!surface.value) return
+  pulseArtwork()
   const cx = surface.value.clientWidth / 2
   const cy = surface.value.clientHeight / 2
   const worldX = (cx - viewport.x) / viewport.zoom
@@ -468,6 +491,7 @@ function setZoom(next: number) {
 
 function fitNodes() {
   if (!surface.value || !store.workflow.nodes.length) return
+  pulseArtwork()
   const left = Math.min(...store.workflow.nodes.map(node => node.x))
   const top = Math.min(...store.workflow.nodes.map(node => node.y))
   const right = Math.max(...store.workflow.nodes.map(node => node.x + node.width))
@@ -533,6 +557,10 @@ watch(() => store.workflow, async value => {
 watch(() => store.workflow.connections, requestDraw, { deep: true })
 watch(() => store.workflow.nodes.length, () => nextTick(invalidatePortLayout))
 watch(() => store.highlightedJobId, requestDraw)
+watch(() => props.artwork, () => {
+  artworkActivity.reset()
+  syncArtworkInteraction()
+})
 
 onMounted(async () => {
   window.addEventListener('pointermove', pointerMove)
@@ -558,6 +586,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('blur', windowBlur)
   window.removeEventListener('keydown', keyDown)
   cancelInteractions()
+  artworkActivity.dispose()
   resizeObserver?.disconnect()
   lastSurfaceSize = null
   if (drawFrame) cancelAnimationFrame(drawFrame)
@@ -570,6 +599,7 @@ onBeforeUnmount(() => {
 <template>
   <main ref="surface" class="workflow-surface" @pointerdown="surfaceDown" @wheel="wheel">
     <div ref="gridLayer" class="workflow-grid-layer" />
+    <CanvasArtwork v-if="artwork" :artwork="artwork" :active="artworkActive" />
     <canvas ref="connectionCanvas" class="connection-webgl-canvas" aria-hidden="true" />
     <div ref="pane" class="transform-pane">
       <NodeCard

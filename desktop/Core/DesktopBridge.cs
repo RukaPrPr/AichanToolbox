@@ -17,6 +17,8 @@ internal sealed class DesktopBridge : IDisposable
     private readonly Action _beginWindowDrag;
     private readonly Action<string> _beginWindowResize;
     private readonly Action _appReady;
+    private readonly AppearanceSettings _appearance;
+    private readonly Action<ThemeSelection> _setTheme;
     private readonly JsonSerializerOptions _json;
     private readonly List<FileJob> _jobs = new();
     private readonly List<ArchiveJob> _archives = new();
@@ -33,13 +35,16 @@ internal sealed class DesktopBridge : IDisposable
     private readonly object _outputGate = new();
     private readonly HashSet<string> _reservedOutputs = new(StringComparer.OrdinalIgnoreCase);
 
-    public DesktopBridge(Window owner, WebView2 browser, Action beginWindowDrag, Action<string> beginWindowResize, Action appReady)
+    public DesktopBridge(Window owner, WebView2 browser, Action beginWindowDrag, Action<string> beginWindowResize,
+        Action appReady, AppearanceSettings appearance, Action<ThemeSelection> setTheme)
     {
         _owner = owner;
         _browser = browser;
         _beginWindowDrag = beginWindowDrag;
         _beginWindowResize = beginWindowResize;
         _appReady = appReady;
+        _appearance = appearance;
+        _setTheme = setTheme;
         _json = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -92,8 +97,14 @@ internal sealed class DesktopBridge : IDisposable
         {
             case "app.startup":
                 return BuildStartupSnapshot(ReadOptionalString(request.Payload, "rememberedProfile"));
+            case "app.setTheme":
+                _setTheme(new ThemeSelection(
+                    ReadString(request.Payload, "id"),
+                    ReadString(request.Payload, "colorScheme"),
+                    ReadString(request.Payload, "background")));
+                return new { theme = _appearance.Current.Id };
             case "app.ready":
-                return new { version = "8.0.2", jobs = _jobs, archives = _archives, processorCount = Environment.ProcessorCount, maximized = _owner.WindowState == WindowState.Maximized };
+                return new { version = "8.1.0", jobs = _jobs, archives = _archives, processorCount = Environment.ProcessorCount, maximized = _owner.WindowState == WindowState.Maximized };
             case "app.frontendReady":
                 CaptureFrontendStartupMetrics(request.Payload);
                 _appReady();
@@ -402,7 +413,8 @@ internal sealed class DesktopBridge : IDisposable
         StartupTelemetry.Mark("profiles.startupSnapshot.complete");
         return new
         {
-            version = "8.0.2",
+            version = "8.1.0",
+            theme = _appearance.Current.Id,
             jobs = _jobs,
             archives = _archives,
             processorCount = Environment.ProcessorCount,

@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media.Animation;
+using System.Windows.Media;
+using AichanToolbox.Core;
 
 namespace AichanToolbox;
 
@@ -12,9 +14,14 @@ public partial class StartupWindow : Window
     private const double MinimumHeight = 560;
     private bool _closing;
 
-    public StartupWindow()
+    public StartupWindow() : this(ThemeSelection.Default)
+    {
+    }
+
+    internal StartupWindow(ThemeSelection theme)
     {
         InitializeComponent();
+        StartupSurface.Background = new SolidColorBrush(theme.SurfaceColor);
     }
 
     public void MatchOwnerBounds(Window owner)

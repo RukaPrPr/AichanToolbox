@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-8.0.2-7774d8?style=flat-square" alt="Version 8.0.2">
+  <img src="https://img.shields.io/badge/version-8.1.0-7774d8?style=flat-square" alt="Version 8.1.0">
   <img src="https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet" alt=".NET 10">
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4?style=flat-square&logo=windows11" alt="Windows x64">
   <img src="https://img.shields.io/badge/Vue-3.5-42B883?style=flat-square&logo=vuedotjs" alt="Vue 3.5">
@@ -28,15 +28,17 @@
 
 桌面端由 C#、WPF 与标准 WebView2 承载，界面使用 Vue 3 和 TypeScript；图片处理以 libvips 为核心，JPEG 由 Jpegli 进行 4:4:4 高画质编码。工作流会延迟生成中间文件，尽量从同一工作底图直接得到最终结果，避免不必要的重复解码和代际压缩。
 
-## 8.0.2 更新重点
+## 8.1.0 更新重点
 
-- 修复 Logo 呼吸结束、切换到主界面时整个程序瞬间闪黑的问题，已通过用户本机验收。
-- 保留 Logo 呼吸和 110ms 淡出；退出时只淡出临时启动窗的内容层，主窗口保持不透明。
-- 统一宿主、生产页面和开发页面的浅色启动背景，避免前端资源加载前露出黑色底面。
-- 等待字体、图片解码和两次真实动画帧后再切换主界面，不再用固定计时器判断页面已绘制。
-- 新增启动回归与 WPF 启动冒烟测试。窗口缩放、底栏滞后及边框撕裂问题仍待处理，未纳入本次修复。
+- 新增“石墨紫”和“黑金女仆”深色主题，保留银白默认浅色外观；顶部菜单切换并记忆选择，启动窗、主窗口及 WebView2 底色同步。
+- 黑金女仆采用艾酱透明立绘，固定在可见画布左下；平移、缩放、拖动和连线时淡化，不拦截操作。
+- 主题配色、立绘和节点库角标独立配置，共用控件及交互逻辑，方便增加更多普通或二次元主题。
+- 节点端口外环与中心始终同色；节点库四角固定、不随列表滚动，程序外框不再绘制角标，抽屉上、左、下统一留出 14px。
+- 窗口移动和缩放延后到 WebView2 消息回调返回之后执行，避免嵌套原生交互循环；此修正不代表底栏滞后或边框撕裂已解决。
 
 完整更新记录见 [CHANGELOG](CHANGELOG.md)，已发布安装包见 [GitHub Releases](https://github.com/RukaPrPr/AichanToolbox/releases)。
+
+各主题定义和素材独立，新增配色或二次元主题的方法见 [主题扩展指南](frontend/THEMES.md)。`libraryOrnament` 仅扩展节点库四角，不提供程序外框角标扩展。
 
 ## 下载与运行
 
@@ -127,7 +129,7 @@ ZIP 解压 → 导入 / 文件列表 → 图片处理与分支 → 保存输出 
 - DOM 节点始终使用同一套 `translate3d` 世界坐标；指针移动按 `requestAnimationFrame` 合并，每个显示帧最多提交一次交互更新。
 - 连接线由固定视口 WebGL 图层绘制，DOM 节点和连接线共享坐标矩阵；缩放、平移和拖动时保留完整彩色光晕。
 - 端口坐标在拖动开始时缓存，拖动期间不逐帧读取所有节点布局。
-- 窗口宽度小于 1180px 时，左侧节点库会变成顶部毛玻璃抽屉；跨断点使用 FLIP 动画并保持画布中心。
+- 窗口宽度小于 1220px 时，左侧节点库会变成顶部毛玻璃抽屉；跨断点使用 FLIP 动画并保持画布中心。
 - 启动时先显示轻量 WPF 启动画面，再创建主窗口与 WebView2；版本、配置、文件与工作流使用一次启动快照，图片引擎和历史缓存清理由后台延迟初始化。
 - 生产前端使用 Terser 压缩并关闭未使用的 Vue Options API；启动日志会细分 HTML、脚本资源、模块执行、首帧、配置快照和 WebView2 各阶段。
 - 自定义透明光标、WebGL 曲线和节点合成路径均适配 Windows 高 DPI 与画布 30%—200% 缩放。
@@ -179,7 +181,7 @@ cd AichanToolbox
 # 完整构建
 .\build.ps1
 
-# 前端启动回归：浅色入口、真实帧等待与启动交接
+# 前端回归：主题恢复与清理、立绘交互、真实帧等待与启动交接
 pnpm --dir frontend test
 
 # WPF 启动属性与动画冒烟（不显示窗口、不创建浏览器配置）

@@ -5,6 +5,7 @@ import { actionDialog, requestAction, requestNotice, resolveAction } from './con
 import { nodeMeta } from './defaults'
 import { useAppStore } from './store'
 import { waitForStartupPaint } from './startup'
+import { applyTheme, resolveTheme, rememberTheme, themes } from './theme'
 import type { ArchiveJob, FileJob, NodeType, ReplacedArchiveConfirmation, ReplacedSourceConfirmation, StartupSnapshot, WorkflowDocument } from './types'
 import GlassSelect from './components/GlassSelect.vue'
 import NodeGlyph from './components/NodeGlyph.vue'
@@ -27,8 +28,15 @@ const profileDialogMode = ref<'save' | 'rename'>('save')
 const profileDraftName = ref('')
 const profileNameInput = ref<HTMLInputElement | null>(null)
 const isMaximized = ref(Boolean(props.startup?.maximized))
+const themeId = ref(resolveTheme(document.documentElement.dataset.theme).id)
+const themeSaving = ref(false)
+const activeTheme = computed(() => resolveTheme(themeId.value))
+const themeOptions = themes.map(theme => ({
+  label: theme.name + (theme.colorScheme === 'dark' ? ' · 深色' : ' · 浅色'),
+  value: theme.id
+}))
 const sidebarDrawerOpen = ref(false)
-const stackedHeader = ref(window.innerWidth < 1180)
+const stackedHeader = ref(window.innerWidth < 1220)
 const brandElement = ref<HTMLElement | null>(null)
 const primaryToolbarGroup = ref<HTMLElement | null>(null)
 const secondaryToolbarGroup = ref<HTMLElement | null>(null)
@@ -76,17 +84,36 @@ function notify(text: string, error = false) {
   toastTimer = window.setTimeout(() => { toast.value = null }, 3600)
 }
 
+async function changeTheme(value: unknown) {
+  if (themeSaving.value) return
+  themeSaving.value = true
+  const theme = applyTheme(value)
+  themeId.value = theme.id
+  const remembered = rememberTheme(theme)
+  try {
+    const saved = await callHost<{ theme: string } | null>('app.setTheme', {
+      id: theme.id, colorScheme: theme.colorScheme, background: theme.background
+    })
+    if (!remembered && !saved) notify('主题已切换，但浏览器无法保存偏好，下次打开可能需要重新选择。', true)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    notify('主题已切换，但桌面偏好保存失败：' + message, true)
+  } finally {
+    themeSaving.value = false
+  }
+}
+
 function addNode(type: NodeType) {
   const view = store.workflow.viewport
   store.addNode(type, Math.round((360 - view.x) / view.zoom), Math.round((160 - view.y) / view.zoom))
-  if (window.innerWidth < 1180) sidebarDrawerOpen.value = false
+  if (window.innerWidth < 1220) sidebarDrawerOpen.value = false
 }
 
 function handleResponsiveResize() {
   if (responsiveFrame) return
   responsiveFrame = window.requestAnimationFrame(() => {
     responsiveFrame = 0
-    const nextStacked = window.innerWidth < 1180
+    const nextStacked = window.innerWidth < 1220
     if (nextStacked !== stackedHeader.value) void animateResponsiveHeader(nextStacked)
   })
 }
@@ -185,7 +212,7 @@ async function animateResponsiveHeader(nextStacked: boolean) {
       { opacity: 1, transform: 'scale(1)' }
     ], { duration: 130, easing: 'cubic-bezier(.2,.8,.2,1)' })
   } else {
-    Array.from(sidebarPanelElement.value?.children ?? []).forEach((child, index) => {
+    Array.from(sidebarPanelElement.value?.querySelector('.sidebar-scroll')?.children ?? []).forEach((child, index) => {
       child.animate([
         { opacity: 0, transform: 'translateX(-7px)' },
         { opacity: 1, transform: 'translateX(0)' }
@@ -459,12 +486,14 @@ onMounted(async () => {
   onHostEvent('workProgress', (value: any) => store.setProgress(value))
   onHostEvent('workState', (value: any) => store.setWorkState(value))
   onHostEvent('windowStateChanged', (value: { maximized: boolean }) => { isMaximized.value = Boolean(value?.maximized) })
-  if (props.startup?.selectedProfile) {
-    localStorage.setItem(profileStorageKey, props.startup.selectedProfile)
-    store.status = `已加载内置配置“${props.startup.selectedProfile}”`
-  } else if (localStorage.getItem(profileStorageKey)) {
-    localStorage.removeItem(profileStorageKey)
-  }
+  try {
+    if (props.startup?.selectedProfile) {
+      localStorage.setItem(profileStorageKey, props.startup.selectedProfile)
+      store.status = `已加载内置配置“${props.startup.selectedProfile}”`
+    } else if (localStorage.getItem(profileStorageKey)) {
+      localStorage.removeItem(profileStorageKey)
+    }
+  } catch { /* Optional preferences must not block the startup handoff. */ }
   if (props.startupError) showError(new Error(props.startupError))
   await nextTick()
   await waitForStartupPaint()
@@ -556,6 +585,12 @@ onBeforeUnmount(() => {
           <button v-if="!store.busy" class="run-button" :disabled="!canStart" @click="startWork('run')"><i>▶</i>运行工作流</button>
           <button v-else class="run-button cancel" @click="cancelWork"><i>■</i>停止任务</button>
           <button class="toolbar-button icon-only" title="打开输出目录" @click="openOutput">↗</button>
+          <GlassSelect v-model="themeId" class="theme-select" :label="'界面主题，当前：' + activeTheme.name" :title="'当前主题：' + activeTheme.name" :options="themeOptions" :disabled="themeSaving" @change="changeTheme">
+            <template #value>
+              <svg v-if="activeTheme.colorScheme === 'dark'" class="theme-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.3 15.2A8.6 8.6 0 0 1 8.8 3.7 8.6 8.6 0 1 0 20.3 15.2Z" /></svg>
+              <svg v-else class="theme-glyph" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.7" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4m0-14.2-1.4 1.4M6.3 17.7l-1.4 1.4" /></svg>
+            </template>
+          </GlassSelect>
         </div>
       </nav>
       <div class="window-controls">
@@ -577,31 +612,37 @@ onBeforeUnmount(() => {
         <svg class="sidebar-toggle-chevron" viewBox="0 0 12 8" aria-hidden="true"><path d="m1 1.5 5 5 5-5" /></svg>
       </button>
       <aside ref="sidebarPanelElement" class="sidebar glass-panel" :class="{ 'drawer-open': sidebarDrawerOpen }">
-        <div class="sidebar-heading">
-          <div><span>NODE LIBRARY</span><h2>节点库</h2></div>
-          <div class="sidebar-heading-actions">
-            <button class="clear-button" title="清空节点" :disabled="store.busy" @click="clearNodes">清空</button>
-            <button class="sidebar-close" type="button" title="关闭节点库" aria-label="关闭节点库" @click="sidebarDrawerOpen = false">×</button>
-          </div>
+        <div class="sidebar-ornaments" aria-hidden="true">
+          <i class="corner-top-left" /><i class="corner-top-right" />
+          <i class="corner-bottom-left" /><i class="corner-bottom-right" />
         </div>
+        <div class="sidebar-scroll">
+          <div class="sidebar-heading">
+            <div><span>NODE LIBRARY</span><h2>节点库</h2></div>
+            <div class="sidebar-heading-actions">
+              <button class="clear-button" title="清空节点" :disabled="store.busy" @click="clearNodes">清空</button>
+              <button class="sidebar-close" type="button" title="关闭节点库" aria-label="关闭节点库" @click="sidebarDrawerOpen = false">×</button>
+            </div>
+          </div>
 
-        <section v-for="group in nodeGroups" :key="group.label" class="node-group">
-          <h3>{{ group.label }}</h3>
-          <button v-for="type in group.nodes" :key="type" class="library-node" :disabled="store.busy" @click="addNode(type)">
-            <i :style="{ '--accent': nodeMeta[type].accent }"><NodeGlyph :type="type" /></i>
-            <span><strong>{{ nodeMeta[type].title }}</strong><small>{{ type }}</small></span>
-            <b>＋</b>
-          </button>
-        </section>
+          <section v-for="group in nodeGroups" :key="group.label" class="node-group">
+            <h3>{{ group.label }}</h3>
+            <button v-for="type in group.nodes" :key="type" class="library-node" :disabled="store.busy" @click="addNode(type)">
+              <i :style="{ '--accent': nodeMeta[type].accent }"><NodeGlyph :type="type" /></i>
+              <span><strong>{{ nodeMeta[type].title }}</strong><small>{{ type }}</small></span>
+              <b>＋</b>
+            </button>
+          </section>
 
-        <div class="sidebar-help">
-          <span>操作提示</span>
-          <p>拖动空白区域移动画布，滚轮围绕指针缩放。拖动节点标题移动；从彩色端口拉出连接线。</p>
+          <div class="sidebar-help">
+            <span>操作提示</span>
+            <p>拖动空白区域移动画布，滚轮围绕指针缩放。拖动节点标题移动；从彩色端口拉出连接线。</p>
+          </div>
         </div>
       </aside>
     </div>
 
-    <WorkflowCanvas />
+    <WorkflowCanvas :artwork="activeTheme.artwork" />
 
     <footer class="statusbar glass-panel">
       <div class="status-message"><i :class="{ busy: store.busy }" />{{ store.status }}</div>

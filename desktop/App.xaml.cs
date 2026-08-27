@@ -13,7 +13,8 @@ public partial class App : System.Windows.Application
     {
         StartupTelemetry.Mark("wpf.onStartup");
         base.OnStartup(e);
-        var startup = new StartupWindow();
+        var appearance = new AppearanceSettings();
+        var startup = new StartupWindow(appearance.Current);
         startup.MatchInitialBounds(e.Args);
         startup.Show();
         StartupTelemetry.Mark("wpf.startupWindowShown");
@@ -22,7 +23,7 @@ public partial class App : System.Windows.Application
         // visible before MainWindow construction and WebView2 initialization begin.
         Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
         {
-            var window = new MainWindow(e.Args);
+            var window = new MainWindow(e.Args, appearance);
             StartupTelemetry.Mark("wpf.windowConstructed");
             MainWindow = window;
             window.AttachStartupWindow(startup);

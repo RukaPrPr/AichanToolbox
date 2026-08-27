@@ -1,12 +1,24 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light" />
-    <style>html,body,#app{width:100%;height:100%;margin:0;background:#eef1f4;overflow:hidden}</style>
+    <meta name="color-scheme" content="light dark" />
+    <style>:root{--app-background:#eef1f4;color-scheme:light}html,body,#app{width:100%;height:100%;margin:0;background:var(--app-background);overflow:hidden}</style>
     <title>艾酱图片工具箱</title>
-    <script>window.__AICHAN_BOOT__={htmlStartedAt:performance.now()}</script>
+    <script>
+      window.__AICHAN_BOOT__={htmlStartedAt:performance.now()};
+      try {
+        const saved=JSON.parse(localStorage.getItem('aichan:theme')||'null');
+        if (saved && typeof saved.id==='string' && saved.id===saved.id.trim() && /^[a-z][a-z0-9-]{0,63}$/.test(saved.id)
+            && (saved.colorScheme==='light'||saved.colorScheme==='dark')
+            && typeof saved.background==='string' && saved.background.length===7 && /^#[0-9a-f]{6}$/i.test(saved.background)) {
+          document.documentElement.dataset.theme=saved.id;
+          document.documentElement.style.colorScheme=saved.colorScheme;
+          document.documentElement.style.setProperty('--app-background',saved.background);
+        }
+      } catch { /* Keep the light default when storage is unavailable or invalid. */ }
+    </script>
   </head>
   <body>
     <div id="app"></div>

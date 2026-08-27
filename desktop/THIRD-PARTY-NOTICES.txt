@@ -1,4 +1,4 @@
-艾酱图片工具箱 8.0.2 — 第三方组件说明
+艾酱图片工具箱 8.1.0 — 第三方组件说明
 
 1. NetVips 3.2.0
    .NET bindings for libvips，MIT License。
