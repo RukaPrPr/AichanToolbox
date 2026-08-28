@@ -30,6 +30,7 @@
 
 ## 8.1.1 更新重点
 
+- HEIC/HEIF 缺少解码器时显示明确提示，覆盖导入、预估和转换并保留原图；不新增解码组件，暂无完整解码支持计划。
 - 目标体积节点开启“未达标时输出最小结果”后，保留实际生成的最小 JPG 并继续“未达标”分支，不计失败；该出口缺失或无效时，在预估和运行前拒绝启动。
 - 修复最小结果被标记为“已取消”、实际大小未显示以及 ZIP 回退原图的问题；保存失败或输出丢失时明确阻止打包。
 - 修复黑白优化的临时图像未释放导致原图被占用、回收报错 `0x80270028` 的问题。替换前先完整保存处理结果，真正无法回收原图时保留原图并另存 `_processed` 结果。
@@ -56,7 +57,9 @@
 - Microsoft Edge WebView2 Runtime。Windows 10/11 通常已经安装；精简系统可从 [Microsoft WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) 获取。
 - 将压缩包完整解压到有写入权限的目录。程序由多个文件组成，请勿只移动或直接从 ZIP 内运行 `AichanToolbox.exe`。
 
-默认发行包不包含体积较大的 FFmpeg。PNG、JPG/JPEG、WebP、AVIF、HEIC 等常用格式优先由 libvips 解码；只有 libvips 无法读取的少数格式才需要额外的 `ffmpeg.exe` 兼容组件。
+默认发行包不包含体积较大的 FFmpeg。PNG、JPG/JPEG、WebP、AVIF 等常用格式优先由 libvips 解码；只有 libvips 无法读取的少数格式才需要额外的 `ffmpeg.exe` 兼容组件。
+
+默认发行包缺少 HEIC/HEIF 解码器。识别到这类文件时，直接导入和 ZIP 导入都会在文件列表提示“缺少 HEIC/HEIF 解码器”；预估或转换时也会明确提示，不会修改原图。目前没有新增完整解码支持的计划；已配置的可选 FFmpeg 回退保持不变。
 
 ## 快速开始
 
@@ -195,6 +198,9 @@ dotnet run --project .\tests\AichanToolbox.StartupSmoke\AichanToolbox.StartupSmo
 
 # 图片、工作流、目标体积分流、替换与 ZIP 引擎冒烟（含生成测试图片的真实回收）
 dotnet run --project .\tests\AichanToolbox.EngineSmoke\AichanToolbox.EngineSmoke.csproj -c Release -- "$(Get-Location)"
+
+# 可额外传入一张 HEIC/HEIF 样本，验证缺少解码器时的导入、转换提示与原图保护
+# 在上条命令末尾追加样本完整路径即可；未传入时使用内置容器标识测试数据
 
 # 目标体积探针构建
 dotnet build .\tests\AichanToolbox.TargetSizeProbe\AichanToolbox.TargetSizeProbe.csproj -c Release

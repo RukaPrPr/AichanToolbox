@@ -54,4 +54,7 @@
 便携版发布目录已包含 .NET 10 桌面运行时、libvips 与 Jpegli；精简版需要系统预先安装 .NET 10 Desktop Runtime。界面需要 Microsoft Edge WebView2 Runtime，Windows 10/11 通常已自带；若被精简，软件会显示缺少组件的提示。第三方组件许可文件随程序一同分发。
 
 FFmpeg 兼容组件：
-主程序默认不再携带体积较大的 FFmpeg。PNG、JPG、WebP、AVIF、HEIC 等常用格式优先由 libvips 解码；只有 libvips 无法读取的少数文件才需要把与本版本配套的 ffmpeg.exe 放入 tools 文件夹。缺失时软件会给出明确提示，不影响其他图片处理。
+主程序默认不再携带体积较大的 FFmpeg。PNG、JPG、WebP、AVIF 等常用格式优先由 libvips 解码；只有 libvips 无法读取的少数文件才需要把与本版本配套的 ffmpeg.exe 放入 tools 文件夹。缺失时软件会给出明确提示，不影响其他图片处理。
+
+HEIC/HEIF：
+默认发行包缺少 HEIC/HEIF 解码器。直接导入或从 ZIP 导入时，文件列表会显示缺少解码器的提示；预估或转换时同样会明确提示并保留原图。目前没有新增完整解码支持的计划。已有的可选 FFmpeg 回退保持不变。

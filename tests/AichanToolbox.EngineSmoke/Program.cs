@@ -3,7 +3,7 @@ using System.IO.Compression;
 using AichanToolbox.Core;
 using NetVips;
 
-if (args.Length != 1) throw new InvalidOperationException("请传入项目根目录。");
+if (args.Length is < 1 or > 2) throw new InvalidOperationException("请传入项目根目录，可额外传入一张 HEIC/HEIF 样本验证缺少解码器的提示。");
 var projectRoot = Path.GetFullPath(args[0]);
 var temporaryRoot = Path.Combine(Path.GetTempPath(), "AichanEngineSmoke", Guid.NewGuid().ToString("N"));
 var engineCache = Path.Combine(temporaryRoot, "cache");
@@ -25,6 +25,52 @@ try
     Require(CanOpenExclusively(source), "读取分辨率后 libvips 仍占用源文件。");
     var runner = new WorkflowRunner(engine);
     Require(ShellRecycleBin.WorkerApartmentState == ApartmentState.STA, "回收站队列没有运行在专用 STA 线程中。");
+
+    var noDecoderCache = Path.Combine(temporaryRoot, "no-heic-decoder-cache");
+    var noHeicDecoder = new ImageEngine(Path.Combine(temporaryRoot, "missing-ffmpeg.exe"), jpegli, noDecoderCache);
+    // 仅含容器标识，没有像素数据：验证尺寸读取失败时仍能导入并提示，而不是解码能力。
+    var heicHeader = Convert.FromHexString("000000186674797068656963000000006D69663168656963");
+    foreach (var extension in new[] { ".heic", ".HEIC", ".heif", ".HeIf" })
+    {
+        var heicPath = Path.Combine(temporaryRoot, "decoder-notice" + extension);
+        File.WriteAllBytes(heicPath, heicHeader);
+        Require(ArchiveService.IsSupportedImage(heicPath), "HEIC/HEIF 没有被导入或 ZIP 图片筛选识别。");
+        var heicJob = DesktopBridge.CreateImageJob(heicPath, noHeicDecoder);
+        Require(heicJob.SourcePath == heicPath && heicJob.Status == ImageEngine.MissingHeicDecoderMessage,
+            "HEIC/HEIF 导入时没有保留文件并显示缺少解码器的提示。");
+        Require(heicJob.OriginalWidth == 0 && heicJob.OriginalHeight == 0,
+            "无法读取 HEIC 尺寸时不应伪造分辨率。");
+        await RequireMissingHeicDecoderAsync(() => noHeicDecoder.RenderAsync(heicPath, ".jpg", 0, 0, 90, false, 0, CancellationToken.None));
+        await RequireMissingHeicDecoderAsync(() => noHeicDecoder.PrepareJpegSourceAsync(heicPath, 0, 0, false, 0, CancellationToken.None));
+        Require(File.ReadAllBytes(heicPath).SequenceEqual(heicHeader), "缺少解码器时修改了 HEIC 原文件。");
+        Require(!engine.IsHeicDecoderMissing(heicPath), "已配置的可选 FFmpeg 回退被提前阻止。");
+    }
+    Require(!Directory.EnumerateFileSystemEntries(noDecoderCache).Any(), "缺少 HEIC 解码器时遗留了临时输出。");
+    if (args.Length == 2)
+    {
+        var samplePath = Path.GetFullPath(args[1]);
+        var originalBytes = File.ReadAllBytes(samplePath);
+        var originalWriteTime = File.GetLastWriteTimeUtc(samplePath);
+        var sampleJob = DesktopBridge.CreateImageJob(samplePath, noHeicDecoder);
+        Require(sampleJob.Status == ImageEngine.MissingHeicDecoderMessage, "真实 HEIC 样本导入时没有显示缺少解码器的提示。");
+        Require(sampleJob.OriginalWidth > 0 && sampleJob.OriginalHeight > 0, "真实 HEIC 样本未保留可读取的尺寸信息。");
+        var sampleRunner = new WorkflowRunner(noHeicDecoder);
+        await RequireMissingHeicDecoderAsync(() => sampleRunner.ExecuteAsync(
+            sampleJob, LinearWorkflow(Node("heic-convert", "ConvertJpg")), CancellationToken.None));
+        await RequireMissingHeicDecoderAsync(() => sampleRunner.ExecuteAsync(
+            sampleJob, LinearWorkflow(Node("heic-target", "TargetSize", data => data.TargetSizeMb = 0.01)), CancellationToken.None));
+        Require(File.ReadAllBytes(samplePath).SequenceEqual(originalBytes) && File.GetLastWriteTimeUtc(samplePath) == originalWriteTime,
+            "缺少解码器提示验证修改了真实 HEIC 样本。");
+        Console.WriteLine($"HEIC_SAMPLE_NOTICE_OK name={sampleJob.Name} dimensions={sampleJob.OriginalWidth}x{sampleJob.OriginalHeight} import=true convert=true target-size=true original-unchanged=true");
+    }
+    var pngWithoutCompatibilityDecoder = DesktopBridge.CreateImageJob(source, noHeicDecoder);
+    Require(pngWithoutCompatibilityDecoder.Status == "待运行"
+        && pngWithoutCompatibilityDecoder.OriginalWidth == 64 && pngWithoutCompatibilityDecoder.OriginalHeight == 32,
+        "HEIC 提示影响了普通 PNG 导入。");
+    var pngWithoutCompatibilityResult = await new WorkflowRunner(noHeicDecoder).ExecuteAsync(
+        pngWithoutCompatibilityDecoder, LinearWorkflow(Node("no-ffmpeg-convert", "ConvertJpg")), CancellationToken.None);
+    Require(pngWithoutCompatibilityResult.Transformed && File.Exists(pngWithoutCompatibilityResult.FinalPath),
+        "没有可选 FFmpeg 时，HEIC 提示影响了普通 PNG 转 JPG。");
 
     DesktopBridge.ValidateWorkflow(LinearWorkflow(Node("validated-convert", "ConvertJpg")));
     var signatureWorkflow = LinearWorkflow(Node("signature-convert", "ConvertJpg"));
@@ -510,7 +556,7 @@ try
     catch (InvalidDataException) { traversalBlocked = true; }
     Require(traversalBlocked && !File.Exists(Path.Combine(temporaryRoot, "escaped.txt")), "ZIP 路径穿越没有被阻止。");
 
-    Console.WriteLine($"ENGINE_SMOKE_OK first={first.Size}B current-size={exactSize.Size}B target-size={targetSized.Size}B target-unmet-skip=true target-unmet-smallest=true target-unmet-retry=true target-unmet-legacy=true sampling=4:4:4 jpg-path-validation=true jpg-pass-through=true replacement-baseline=true recycle-sta=true recycle-after-grayscale=true recycle-abort-fallback=true smallest-output-zip=true incomplete-output-blocked=true archive-replacement-baseline=true zip-store=true zip-cleanup-safe=true zip-slip-blocked=true");
+    Console.WriteLine($"ENGINE_SMOKE_OK first={first.Size}B current-size={exactSize.Size}B target-size={targetSized.Size}B heic-missing-decoder=true heic-case-insensitive=true heic-original-preserved=true png-without-ffmpeg=true target-unmet-skip=true target-unmet-smallest=true target-unmet-retry=true target-unmet-legacy=true sampling=4:4:4 jpg-path-validation=true jpg-pass-through=true replacement-baseline=true recycle-sta=true recycle-after-grayscale=true recycle-abort-fallback=true smallest-output-zip=true incomplete-output-blocked=true archive-replacement-baseline=true zip-store=true zip-cleanup-safe=true zip-slip-blocked=true");
 }
 finally
 {
@@ -796,6 +842,22 @@ static bool CanOpenExclusively(string path)
     {
         return false;
     }
+}
+
+static async Task RequireMissingHeicDecoderAsync(Func<Task> action)
+{
+    try
+    {
+        await action();
+    }
+    catch (InvalidOperationException exception)
+    {
+        var wrapped = new InvalidOperationException("图片处理失败。", exception);
+        Require(DesktopBridge.FriendlyMessage(wrapped) == ImageEngine.MissingHeicDecoderMessage,
+            "HEIC 错误在界面中没有保留缺少解码器的提示。");
+        return;
+    }
+    throw new InvalidOperationException("缺少 HEIC 解码器时仍尝试处理图片。");
 }
 
 static void Require(bool condition, string message)

@@ -302,28 +302,34 @@ internal sealed class DesktopBridge : IDisposable
             if (!File.Exists(path) || existing.Contains(path) || !IsSupportedImage(path)) continue;
             try
             {
-                var info = new FileInfo(path);
-                var dimensions = _imageEngine.ReadDimensions(path);
-                _jobs.Add(new FileJob
-                {
-                    SourcePath = path,
-                    OriginalSourcePath = path,
-                    Format = ImageMetadataReader.FormatName(path),
-                    OriginalSize = info.Length,
-                    OriginalWidth = dimensions.Width,
-                    OriginalHeight = dimensions.Height,
-                    CurrentSize = info.Length,
-                    CurrentWidth = dimensions.Width,
-                    CurrentHeight = dimensions.Height,
-                    TargetFormat = ImageMetadataReader.FormatName(path),
-                    TargetWidth = dimensions.Width,
-                    TargetHeight = dimensions.Height
-                });
+                _jobs.Add(CreateImageJob(path, _imageEngine));
                 existing.Add(path);
             }
             catch { }
         }
         Emit("jobsChanged", _jobs);
+    }
+
+    internal static FileJob CreateImageJob(string path, ImageEngine engine)
+    {
+        var info = new FileInfo(path);
+        var dimensions = engine.ReadDimensions(path);
+        return new FileJob
+        {
+            SourcePath = path,
+            OriginalSourcePath = path,
+            Format = ImageMetadataReader.FormatName(path),
+            OriginalSize = info.Length,
+            OriginalWidth = dimensions.Width,
+            OriginalHeight = dimensions.Height,
+            CurrentSize = info.Length,
+            CurrentWidth = dimensions.Width,
+            CurrentHeight = dimensions.Height,
+            TargetFormat = ImageMetadataReader.FormatName(path),
+            TargetWidth = dimensions.Width,
+            TargetHeight = dimensions.Height,
+            Status = engine.IsHeicDecoderMissing(path) ? ImageEngine.MissingHeicDecoderMessage : "待运行"
+        };
     }
 
     private static bool IsSupportedImage(string path)
@@ -643,27 +649,12 @@ internal sealed class DesktopBridge : IDisposable
             }
             try
             {
-                var info = new FileInfo(entry.ExtractedPath);
-                var dimensions = _imageEngine.ReadDimensions(entry.ExtractedPath);
-                _jobs.Add(new FileJob
-                {
-                    SourcePath = entry.ExtractedPath,
-                    OriginalSourcePath = entry.ExtractedPath,
-                    Format = ImageMetadataReader.FormatName(entry.ExtractedPath),
-                    OriginalSize = info.Length,
-                    OriginalWidth = dimensions.Width,
-                    OriginalHeight = dimensions.Height,
-                    CurrentSize = info.Length,
-                    CurrentWidth = dimensions.Width,
-                    CurrentHeight = dimensions.Height,
-                    TargetFormat = ImageMetadataReader.FormatName(entry.ExtractedPath),
-                    TargetWidth = dimensions.Width,
-                    TargetHeight = dimensions.Height,
-                    ArchiveJobId = archive.Id,
-                    ArchiveEntryPath = entry.EntryPath,
-                    OriginNodeId = node.Id,
-                    OriginConnectionId = connection.Id
-                });
+                var job = CreateImageJob(entry.ExtractedPath, _imageEngine);
+                job.ArchiveJobId = archive.Id;
+                job.ArchiveEntryPath = entry.EntryPath;
+                job.OriginNodeId = node.Id;
+                job.OriginConnectionId = connection.Id;
+                _jobs.Add(job);
             }
             catch { }
         }
@@ -1589,7 +1580,7 @@ internal sealed class DesktopBridge : IDisposable
     private static string[] ReadStringArray(JsonElement payload, string name)
         => payload.TryGetProperty(name, out var value) ? value.Deserialize<string[]>() ?? Array.Empty<string>() : Array.Empty<string>();
 
-    private static string FriendlyMessage(Exception exception)
+    internal static string FriendlyMessage(Exception exception)
     {
         var value = exception;
         while (value.InnerException is not null) value = value.InnerException;

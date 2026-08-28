@@ -144,7 +144,7 @@ function routeTitle(job: FileJob) {
       <div v-if="!jobs.length" class="file-empty">
         <span class="file-empty-icon">＋</span>
         <strong>还没有图片</strong>
-        <small>点击“选择图片”导入 PNG、JPG、WebP、AVIF、HEIC 或其他格式</small>
+        <small>点击“选择图片”导入 PNG、JPG、WebP、AVIF 等格式；HEIC/HEIF 需要解码器</small>
       </div>
       <div v-else class="file-spacer" :style="{ height: `${sorted.length * rowHeight}px`, minWidth: `${tableWidth}px` }">
         <div

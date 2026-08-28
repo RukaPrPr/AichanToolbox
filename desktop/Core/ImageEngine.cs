@@ -7,6 +7,8 @@ namespace AichanToolbox.Core;
 
 internal sealed class ImageEngine
 {
+    internal const string MissingHeicDecoderMessage = "缺少 HEIC/HEIF 解码器，当前无法处理此格式。";
+
     private readonly string _ffmpegPath;
     private readonly IJpegEncoder _jpegEncoder;
     private readonly string _temporaryRoot;
@@ -50,6 +52,11 @@ internal sealed class ImageEngine
             using var oriented = source.Autorot();
             return (oriented.Width, oriented.Height);
         }
+        catch (Exception) when (IsHeicDecoderMissing(input))
+        {
+            // 即使无法读取尺寸，也保留 HEIC 文件，让导入列表显示缺少解码器的原因。
+            return (0, 0);
+        }
         catch (Exception exception)
         {
             throw new InvalidOperationException($"无法读取图片尺寸：{Path.GetFileName(input)}。", exception);
@@ -68,6 +75,7 @@ internal sealed class ImageEngine
     {
         ValidateDependencies();
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureHeicDecoderAvailable(input);
         var extension = NormalizeExtension(targetExtension, input);
         var output = TemporaryPath(extension);
         var isJpeg = extension is ".jpg" or ".jpeg";
@@ -162,6 +170,7 @@ internal sealed class ImageEngine
     {
         ValidateDependencies();
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureHeicDecoderAvailable(input);
         var prepared = TemporaryPath(".png");
         string? fallback = null;
         try
@@ -584,6 +593,21 @@ internal sealed class ImageEngine
     {
         var lines = value.Trim().Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
         return lines.Length == 0 ? "图片处理失败。" : lines[^1];
+    }
+
+    internal bool IsHeicDecoderMissing(string input)
+    {
+        var extension = Path.GetExtension(input);
+        // 当前发行包的 libvips 只能读取 HEIF 容器，未包含 HEVC 解码器。
+        return (extension.Equals(".heic", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".heif", StringComparison.OrdinalIgnoreCase))
+            && !File.Exists(_ffmpegPath);
+    }
+
+    private void EnsureHeicDecoderAvailable(string input)
+    {
+        if (IsHeicDecoderMissing(input))
+            throw new InvalidOperationException(MissingHeicDecoderMessage);
     }
 
     private InvalidOperationException MissingCompatibilityDecoder(string input, Exception firstError)
