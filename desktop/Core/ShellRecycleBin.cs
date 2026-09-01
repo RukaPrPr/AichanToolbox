@@ -3,16 +3,20 @@ using System.Runtime.InteropServices;
 
 namespace AichanToolbox.Core;
 
+internal sealed record RecycleFileResult(string Path, bool Recycled, Exception? Error);
+
 internal static class ShellRecycleBin
 {
-    private sealed record RecycleRequest(string Path, TaskCompletionSource<bool> Completion);
+    private sealed record RecycleRequest(
+        string[] Paths,
+        TaskCompletionSource<IReadOnlyList<RecycleFileResult>> Completion);
 
     private const uint Silent = 0x0004;
     private const uint NoConfirmation = 0x0010;
     private const uint AllowUndo = 0x0040;
     private const uint NoErrorUi = 0x0400;
     private const uint RecycleOnDelete = 0x00080000;
-    private const uint EarlyFailure = 0x00100000;
+    private const uint NoCopyHooks = 0x00800000;
     private const int RetryCount = 3;
     private static readonly Guid ShellItemId = new("43826D1E-E718-42EE-BC55-A1E261C37BFE");
     private static readonly BlockingCollection<RecycleRequest> Requests = new();
@@ -69,10 +73,25 @@ internal static class ShellRecycleBin
 
     public static void DeleteFile(string path)
     {
-        if (!File.Exists(path)) return;
-        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        Requests.Add(new RecycleRequest(Path.GetFullPath(path), completion));
-        completion.Task.GetAwaiter().GetResult();
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return;
+        var result = DeleteFiles([path]).Single();
+        if (!result.Recycled)
+            throw new IOException($"无法将文件移入回收站：{result.Error?.Message}", result.Error);
+    }
+
+    internal static IReadOnlyList<RecycleFileResult> DeleteFiles(IEnumerable<string> paths)
+    {
+        var normalized = paths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalized.Length == 0) return [];
+
+        var completion = new TaskCompletionSource<IReadOnlyList<RecycleFileResult>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Requests.Add(new RecycleRequest(normalized, completion));
+        return completion.Task.GetAwaiter().GetResult();
     }
 
     private static Thread StartWorker()
@@ -93,8 +112,7 @@ internal static class ShellRecycleBin
         {
             try
             {
-                DeleteFileWithRetry(request.Path, DeleteFileOnce);
-                request.Completion.TrySetResult(true);
+                request.Completion.TrySetResult(DeleteFilesWithRetry(request.Paths, DeleteFilesOnce));
             }
             catch (Exception exception)
             {
@@ -105,51 +123,91 @@ internal static class ShellRecycleBin
 
     internal static void DeleteFileWithRetry(string path, Action<string> deleteFile)
     {
-        Exception? lastError = null;
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return;
+        var result = DeleteFilesWithRetry([path], pending => deleteFile(pending[0])).Single();
+        if (!result.Recycled)
+            throw new IOException($"无法将文件移入回收站：{result.Error?.Message}", result.Error);
+    }
+
+    internal static IReadOnlyList<RecycleFileResult> DeleteFilesWithRetry(
+        IReadOnlyList<string> paths,
+        Action<IReadOnlyList<string>> deleteFiles)
+    {
+        var normalized = paths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var lastErrors = new Dictionary<string, Exception>(StringComparer.OrdinalIgnoreCase);
+
         for (var attempt = 0; attempt < RetryCount; attempt++)
         {
-            if (!File.Exists(path)) return;
+            var pending = normalized.Where(File.Exists).ToArray();
+            if (pending.Length == 0) break;
 
+            Exception? batchError = null;
             try
             {
-                deleteFile(path);
-                if (!File.Exists(path)) return;
-                lastError = new IOException("Windows 回收站接口返回成功，但原文件仍然存在。");
+                deleteFiles(pending);
             }
             catch (Exception exception)
             {
-                lastError = exception;
+                batchError = exception;
             }
 
-            if (attempt + 1 < RetryCount) Thread.Sleep(100 * (attempt + 1));
+            foreach (var path in pending)
+            {
+                if (!File.Exists(path))
+                {
+                    lastErrors.Remove(path);
+                    continue;
+                }
+
+                lastErrors[path] = batchError
+                    ?? new IOException("Windows 回收站接口返回成功，但原文件仍然存在。");
+            }
+
+            if (attempt + 1 < RetryCount && normalized.Any(File.Exists))
+                Thread.Sleep(100 * (attempt + 1));
         }
 
-        throw new IOException($"无法将文件移入回收站：{lastError?.Message}", lastError);
+        return normalized.Select(path =>
+        {
+            var recycled = !File.Exists(path);
+            lastErrors.TryGetValue(path, out var error);
+            return new RecycleFileResult(path, recycled, recycled ? null : error);
+        }).ToList();
     }
 
-    private static void DeleteFileOnce(string path)
+    private static void DeleteFilesOnce(IReadOnlyList<string> paths)
     {
         IFileOperation? operation = null;
-        IShellItem? shellItem = null;
+        var shellItems = new List<IShellItem>(paths.Count);
         try
         {
             operation = (IFileOperation)new FileOperationComObject();
             ThrowIfFailed(
-                operation.SetOperationFlags(Silent | NoConfirmation | AllowUndo | NoErrorUi | RecycleOnDelete | EarlyFailure),
+                operation.SetOperationFlags(Silent | NoConfirmation | AllowUndo | NoErrorUi | RecycleOnDelete | NoCopyHooks),
                 "设置回收站操作");
 
-            var shellItemId = ShellItemId;
-            ThrowIfFailed(
-                SHCreateItemFromParsingName(path, IntPtr.Zero, ref shellItemId, out shellItem),
-                "解析待回收文件路径");
-            ThrowIfFailed(operation.DeleteItem(shellItem, IntPtr.Zero), "登记回收文件");
-            ThrowIfFailed(operation.PerformOperations(), "执行回收文件");
-            ThrowIfFailed(operation.GetAnyOperationsAborted(out var aborted), "读取回收结果");
-            if (aborted) throw new IOException("Windows 未能完成文件回收操作。");
+            foreach (var path in paths)
+            {
+                var shellItemId = ShellItemId;
+                ThrowIfFailed(
+                    SHCreateItemFromParsingName(path, IntPtr.Zero, ref shellItemId, out var shellItem),
+                    "解析待回收文件路径");
+                shellItems.Add(shellItem);
+                ThrowIfFailed(operation.DeleteItem(shellItem, IntPtr.Zero), "登记回收文件");
+            }
+
+            ThrowIfFailed(operation.PerformOperations(), "执行批量回收文件");
+            ThrowIfFailed(operation.GetAnyOperationsAborted(out var aborted), "读取批量回收结果");
+            if (aborted) throw new IOException("Windows 未能完成全部文件的批量回收操作。");
         }
         finally
         {
-            if (shellItem is not null && Marshal.IsComObject(shellItem)) Marshal.FinalReleaseComObject(shellItem);
+            for (var index = shellItems.Count - 1; index >= 0; index--)
+                if (Marshal.IsComObject(shellItems[index])) Marshal.FinalReleaseComObject(shellItems[index]);
             if (operation is not null && Marshal.IsComObject(operation)) Marshal.FinalReleaseComObject(operation);
         }
     }

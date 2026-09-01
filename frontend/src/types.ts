@@ -86,6 +86,7 @@ export interface FileJob {
   targetWidth: number
   targetHeight: number
   estimatedSize: number | null
+  finalQuality: number | null
   status: string
   checked: boolean
   outputPath?: string | null

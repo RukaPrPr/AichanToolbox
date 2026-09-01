@@ -62,7 +62,7 @@ const nodeGroups: { label: string; nodes: NodeType[] }[] = [
 
 const progressPercent = computed(() => store.progressTotal ? Math.round(store.progress / store.progressTotal * 100) : 0)
 const canStart = computed(() => store.jobs.length > 0 || store.archives.length > 0)
-const workStageLabel = computed(() => store.workStage === 'preprocess' ? '解压' : store.workStage === 'postprocess' ? '打包' : store.workStage === 'cleanup' ? '清理' : store.workMode === 'estimate' ? '预估' : '处理')
+const workStageLabel = computed(() => store.workStage === 'preprocess' ? '解压' : store.workStage === 'replace' ? '替换' : store.workStage === 'postprocess' ? '打包' : store.workStage === 'cleanup' ? '清理' : store.workMode === 'estimate' ? '预估' : '处理')
 const profileOptions = computed<{ label: string; value: string | number }[]>(() => [
   { label: '工作流配置', value: '' },
   ...profiles.value.map(name => ({ label: name, value: name }))

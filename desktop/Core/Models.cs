@@ -81,6 +81,7 @@ public sealed class FileJob
     public int TargetWidth { get; set; }
     public int TargetHeight { get; set; }
     public long? EstimatedSize { get; set; }
+    public int? FinalQuality { get; set; }
     public string Status { get; set; } = "待运行";
     public bool Checked { get; set; } = true;
     public string? OutputPath { get; set; }
@@ -115,6 +116,7 @@ public sealed class FileJob
         TargetWidth = result.Width;
         TargetHeight = result.Height;
         EstimatedSize = result.Size;
+        FinalQuality = result.FinalQuality;
         OutputNodeId = result.OutputNodeId;
         RouteNodeIds = result.RouteNodeIds.ToList();
         RouteConnectionIds = result.RouteConnectionIds.ToList();
@@ -200,6 +202,7 @@ internal sealed class ExecutionResult
     public int Width { get; set; }
     public int Height { get; set; }
     public long Size { get; set; }
+    public int FinalQuality { get; set; } = 100;
     public bool Transformed { get; set; }
     public List<string> RouteNodeIds { get; set; } = new();
     public List<string> RouteConnectionIds { get; set; } = new();
@@ -215,6 +218,7 @@ internal sealed class EstimateCacheEntry
     public long Size { get; set; }
     public int Width { get; set; }
     public int Height { get; set; }
+    public int FinalQuality { get; set; } = 100;
     public List<string> RouteNodeIds { get; set; } = new();
     public List<string> RouteConnectionIds { get; set; } = new();
     public List<string> TargetSizeNotes { get; set; } = new();
@@ -228,6 +232,7 @@ internal sealed class EstimateCacheEntry
         Size = result.Size,
         Width = result.Width,
         Height = result.Height,
+        FinalQuality = result.FinalQuality,
         RouteNodeIds = result.RouteNodeIds.ToList(),
         RouteConnectionIds = result.RouteConnectionIds.ToList(),
         TargetSizeNotes = result.TargetSizeNotes.ToList()
@@ -240,6 +245,7 @@ internal sealed class EstimateCacheEntry
         Size = Size,
         Width = Width,
         Height = Height,
+        FinalQuality = FinalQuality,
         RouteNodeIds = RouteNodeIds.ToList(),
         RouteConnectionIds = RouteConnectionIds.ToList(),
         TargetSizeNotes = TargetSizeNotes.ToList(),

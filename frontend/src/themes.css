@@ -73,7 +73,7 @@ html, body, #app { background:var(--app-background,#eef1f4); }
 
 /* Library, including the compact drawer and its transition surface. */
 [data-theme-palette] .sidebar { background:rgba(var(--theme-chrome-rgb),.96); border-color:var(--theme-line); box-shadow:5px 0 20px rgba(var(--theme-shadow-rgb),.08); }
-[data-theme-palette] .sidebar-scroll::-webkit-scrollbar-thumb, [data-theme-palette] .file-table-scroll::-webkit-scrollbar-thumb, [data-theme-palette] .archive-list::-webkit-scrollbar-thumb { background:rgba(var(--theme-border-rgb),.3); }
+[data-theme-palette] .sidebar-scroll::-webkit-scrollbar-thumb, [data-theme-palette] .file-table-scroll::-webkit-scrollbar-thumb, [data-theme-palette] .archive-list-scroll::-webkit-scrollbar-thumb { background:rgba(var(--theme-border-rgb),.3); }
 [data-theme-palette] .library-node { border-color:var(--theme-line-soft); background:rgba(var(--theme-raised-rgb),.55); box-shadow:var(--theme-shine); }
 [data-theme-palette] .library-node:hover:not(:disabled) { border-color:rgba(var(--theme-accent-rgb),.32); background:var(--theme-hover); box-shadow:none; }
 [data-theme-palette] .library-node b { color:var(--theme-muted); }
@@ -121,6 +121,7 @@ html, body, #app { background:var(--app-background,#eef1f4); }
 [data-theme-palette] .file-head-cell { border-color:var(--theme-line-soft); }
 [data-theme-palette] .file-head-cell>button { color:var(--theme-secondary); }
 [data-theme-palette] .file-head-cell>button:hover { color:var(--theme-text); background:rgba(var(--theme-accent-rgb),.06); }
+[data-theme-palette] .quality-value { color:var(--theme-success); }
 [data-theme-palette] .column-resizer::after { background:var(--theme-line); }
 [data-theme-palette] .column-resizer:hover::after, [data-theme-palette] .column-resizing .column-resizer::after { background:var(--theme-accent); box-shadow:0 0 5px rgba(var(--theme-accent-rgb),.28); }
 [data-theme-palette] :is(.check-cell input,.switch-line input,.resolution-line input[type=checkbox]) { border-color:rgba(var(--theme-border-rgb),.52); background:var(--theme-inset); box-shadow:none; accent-color:var(--theme-accent); }

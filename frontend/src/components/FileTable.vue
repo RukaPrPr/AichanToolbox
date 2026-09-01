@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { callHost } from '../bridge'
+import { finalQuality, formatFinalQuality } from '../fileQuality'
 import { useAppStore } from '../store'
 import type { FileJob } from '../types'
 
@@ -10,7 +11,8 @@ const scrollTop = ref(0)
 const viewportHeight = ref(220)
 const scrollHost = ref<HTMLElement>()
 const headerGrid = ref<HTMLElement>()
-const sortKey = ref<keyof FileJob>('name')
+type ColumnKey = keyof FileJob
+const sortKey = ref<ColumnKey>('name')
 const ascending = ref(true)
 const rowHeight = 34
 const columns = [
@@ -22,6 +24,7 @@ const columns = [
   { key: 'originalWidth', label: '原始分辨率', width: 118, min: 100, max: 180, sortable: true },
   { key: 'targetWidth', label: '目标分辨率', width: 118, min: 100, max: 180, sortable: true },
   { key: 'estimatedSize', label: '预估大小', width: 96, min: 80, max: 160, sortable: true },
+  { key: 'finalQuality', label: '最终画质', width: 92, min: 80, max: 140, sortable: true },
   { key: 'status', label: '状态', width: 150, min: 110, max: 280, sortable: true }
 ] as const
 function savedColumnWidths() {
@@ -53,8 +56,19 @@ onBeforeUnmount(() => {
 })
 
 const sorted = computed(() => [...props.jobs].sort((a, b) => {
-  const av = a[sortKey.value] ?? ''
-  const bv = b[sortKey.value] ?? ''
+  const key = sortKey.value
+  if (key === 'finalQuality') {
+    const av = finalQuality(a)
+    const bv = finalQuality(b)
+    if (av == null || bv == null) {
+      if (av == null && bv == null) return 0
+      return av == null ? 1 : -1
+    }
+    const result = av - bv
+    return ascending.value ? result : -result
+  }
+  const av = a[key] ?? ''
+  const bv = b[key] ?? ''
   const result = typeof av === 'number' && typeof bv === 'number'
     ? av - bv
     : String(av).localeCompare(String(bv), 'zh-CN', { numeric: true })
@@ -65,12 +79,12 @@ const start = computed(() => Math.max(0, Math.floor(scrollTop.value / rowHeight)
 const count = computed(() => Math.ceil(viewportHeight.value / rowHeight) + 7)
 const visible = computed(() => sorted.value.slice(start.value, start.value + count.value))
 
-function setSort(key: keyof FileJob) {
+function setSort(key: ColumnKey) {
   if (sortKey.value === key) ascending.value = !ascending.value
   else { sortKey.value = key; ascending.value = true }
 }
 
-function sortMark(key: keyof FileJob) {
+function sortMark(key: ColumnKey) {
   return sortKey.value === key ? (ascending.value ? ' ↑' : ' ↓') : ''
 }
 
@@ -135,7 +149,7 @@ function routeTitle(job: FileJob) {
           <label v-if="column.key === 'checked'" class="check-cell" title="全选">
             <input type="checkbox" :checked="store.allChecked" :disabled="busy || !jobs.length" @change="toggleAll(($event.target as HTMLInputElement).checked)" />
           </label>
-          <button v-else @click="setSort(column.key as keyof FileJob)">{{ column.label }}{{ sortMark(column.key as keyof FileJob) }}</button>
+          <button v-else @click="setSort(column.key)">{{ column.label }}{{ sortMark(column.key) }}</button>
           <span class="column-resizer" title="拖动调整列宽" @pointerdown.stop.prevent="beginColumnResize(index, $event)" />
         </div>
       </div>
@@ -165,6 +179,7 @@ function routeTitle(job: FileJob) {
           <span>{{ dimensions(job.originalWidth, job.originalHeight) }}</span>
           <span>{{ dimensions(job.targetWidth, job.targetHeight) }}</span>
           <span class="estimate-value">{{ bytes(job.estimatedSize) }}</span>
+          <span class="quality-value">{{ formatFinalQuality(job) }}</span>
           <span class="status-cell">
             <span :title="[job.status, ...(job.targetSizeNotes ?? []), job.outputWarning].filter(Boolean).join('\n')">{{ job.status }}</span>
             <button

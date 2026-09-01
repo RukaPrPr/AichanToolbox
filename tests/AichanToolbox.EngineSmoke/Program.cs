@@ -26,6 +26,36 @@ try
     var runner = new WorkflowRunner(engine);
     Require(ShellRecycleBin.WorkerApartmentState == ApartmentState.STA, "回收站队列没有运行在专用 STA 线程中。");
 
+    var recycleBatchRoot = Path.Combine(temporaryRoot, "recycle-batch");
+    Directory.CreateDirectory(recycleBatchRoot);
+    var recycleBatchFiles = Enumerable.Range(0, 128)
+        .Select(index => Path.Combine(recycleBatchRoot, $"batch-{index:D3}.tmp"))
+        .ToArray();
+    foreach (var path in recycleBatchFiles) File.WriteAllText(path, path);
+    var recycleTransactions = 0;
+    var recycleBatchResults = ShellRecycleBin.DeleteFilesWithRetry(recycleBatchFiles, paths =>
+    {
+        recycleTransactions++;
+        foreach (var path in paths) File.Delete(path);
+    });
+    Require(recycleTransactions == 1 && recycleBatchResults.All(value => value.Recycled),
+        "128 个文件没有合并成一次回收站事务。");
+
+    var retryBatchFiles = Enumerable.Range(0, 12)
+        .Select(index => Path.Combine(recycleBatchRoot, $"retry-{index:D2}.tmp"))
+        .ToArray();
+    foreach (var path in retryBatchFiles) File.WriteAllText(path, path);
+    var retryTransactions = 0;
+    var retryBatchResults = ShellRecycleBin.DeleteFilesWithRetry(retryBatchFiles, paths =>
+    {
+        retryTransactions++;
+        var count = retryTransactions == 1 ? paths.Count / 2 : paths.Count;
+        foreach (var path in paths.Take(count)) File.Delete(path);
+        if (retryTransactions == 1) throw new IOException("模拟批量事务部分完成。");
+    });
+    Require(retryTransactions == 2 && retryBatchResults.All(value => value.Recycled),
+        "批量回收重试没有只处理第一次遗留的文件。");
+
     var noDecoderCache = Path.Combine(temporaryRoot, "no-heic-decoder-cache");
     var noHeicDecoder = new ImageEngine(Path.Combine(temporaryRoot, "missing-ffmpeg.exe"), jpegli, noDecoderCache);
     // 仅含容器标识，没有像素数据：验证尺寸读取失败时仍能导入并提示，而不是解码能力。
@@ -92,6 +122,7 @@ try
     var untouchedPng = await runner.ExecuteAsync(Job(source, 64, 32), passthroughFilterWorkflow, CancellationToken.None);
     Require(!untouchedPng.Transformed, "符合筛选条件的 PNG 直通分支不应生成新文件。");
     Require(untouchedPng.FinalPath.Equals(source, StringComparison.OrdinalIgnoreCase), "不处理分支没有保留原始图片路径。");
+    Require(untouchedPng.FinalQuality == 100, "不处理分支的最终画质不是 100。");
 
     var first = await runner.ExecuteAsync(
         Job(source, 64, 32),
@@ -103,6 +134,7 @@ try
     Require(first.Transformed, "PNG/PPM 转换工作流应标记为已处理。");
     Require(Path.GetExtension(first.FinalPath).Equals(".jpg", StringComparison.OrdinalIgnoreCase), "最终格式不是 JPG。");
     Require(first.Width == 32 && first.Height == 16, $"缩放结果错误：{first.Width}×{first.Height}。");
+    Require(first.FinalQuality == 90, $"画质节点的最终画质记录错误：{first.FinalQuality}。");
     Require(first.RouteNodeIds.Count == 5 && first.RouteConnectionIds.Count == 4, "工作流没有记录完整的节点与连线路径。");
     Require(File.Exists(first.FinalPath) && first.Size > 0, "未生成 JPEG 文件。");
     Require(CanOpenExclusively(source), "工作流完成后 libvips 仍占用源文件。");
@@ -190,6 +222,7 @@ try
     Require(targetSized.Transformed, "目标体积节点没有处理超过目标的输入。");
     Require(Path.GetExtension(targetSized.FinalPath).Equals(".jpg", StringComparison.OrdinalIgnoreCase), "目标体积节点没有生成 JPEG。");
     Require(targetSized.Size <= targetBytes, $"目标体积节点输出超标：{targetSized.Size} > {targetBytes}。");
+    Require(targetSized.FinalQuality is >= 50 and <= 95, $"目标体积节点没有记录实际命中的画质：{targetSized.FinalQuality}。");
     Require(targetSized.Width == 256 && targetSized.Height == 256, "目标体积节点意外改变了分辨率。");
     Require(targetSized.TargetSizeNotes.Count == 0, "达标结果不应带有保留最小结果的提示。");
 
@@ -243,7 +276,8 @@ try
     Require(targetKept.TargetSizeNotes.Count == 1 && targetKept.TargetSizeNotes[0].Contains("已保留最小结果", StringComparison.Ordinal), "成功继续的未达标结果缺少非失败提示。");
     var keptCache = EstimateCacheEntry.FromResult("kept-result", targetKept);
     var keptFromCache = keptCache.RestoreResult(noisySource);
-    Require(keptFromCache.TargetSizeNotes.SequenceEqual(targetKept.TargetSizeNotes)
+    Require(keptFromCache.FinalQuality == targetKept.FinalQuality
+        && keptFromCache.TargetSizeNotes.SequenceEqual(targetKept.TargetSizeNotes)
         && keptFromCache.RouteConnectionIds.SequenceEqual(targetKept.RouteConnectionIds), "预估缓存丢失了未达标提示或执行路径。");
     keptFromCache.TargetSizeNotes.Clear();
     Require(keptCache.TargetSizeNotes.Count == 1 && targetKept.TargetSizeNotes.Count == 1, "缓存还原结果与缓存本身共享了可变提示列表。");
@@ -365,7 +399,9 @@ try
     var unmetOutput = await runner.ExecuteAsync(unmetJob, saveWorkflow, CancellationToken.None);
     Require(unmetOutput.TargetSizeNotes.Count == 1 && unmetOutput.Size > targetUnmetBytes, "保存链路测试未产生真实的未达标最小结果。");
     unmetJob.ApplyExecutionResult(unmetOutput);
-    Require(unmetJob.EstimatedSize == unmetOutput.Size && !unmetJob.OutputReady, "生成结果后没有立即显示实际体积，或误认为已保存。");
+    Require(unmetJob.EstimatedSize == unmetOutput.Size
+        && unmetJob.FinalQuality == unmetOutput.FinalQuality
+        && !unmetJob.OutputReady, "生成结果后没有立即显示实际体积和画质，或误认为已保存。");
 
     var recycleAttempts = 0;
     var interruptedRecycleWriter = new ImageOutputWriter(path => ShellRecycleBin.DeleteFileWithRetry(path, _ =>
@@ -441,6 +477,32 @@ try
     Require(replaceJob.EstimatedSize == unmetOutput.Size && File.ReadAllBytes(replaceCopy).SequenceEqual(File.ReadAllBytes(unmetOutput.FinalPath)),
         "正常替换原图时没有保存最小结果或大小错误。");
 
+    var batchWriterTransactions = 0;
+    var batchWriter = new ImageOutputWriter(recycleFiles: paths =>
+    {
+        batchWriterTransactions++;
+        foreach (var path in paths) File.Delete(path);
+        return paths.Select(path => new RecycleFileResult(path, true, null)).ToList();
+    });
+    var pendingWriterReplacements = new List<PendingImageReplacement>();
+    for (var index = 0; index < 128; index++)
+    {
+        var sourcePath = Path.Combine(temporaryRoot, $"batch-replace-{index:D3}.jpg");
+        File.Copy(noisyJpeg, sourcePath);
+        var batchJob = Job(sourcePath, 256, 256);
+        var prepared = batchWriter.Prepare(batchJob, unmetOutput, saveNode);
+        Require(prepared.Completed is null && prepared.Replacement is not null,
+            "替换原文件没有先进入安全暂存阶段。");
+        pendingWriterReplacements.Add(prepared.Replacement!);
+    }
+    var batchWriterResults = batchWriter.CommitReplacements(pendingWriterReplacements);
+    Require(batchWriterTransactions == 1 && batchWriterResults.Count == 128
+        && batchWriterResults.All(value => value.Replaced && value.Warning is null && File.Exists(value.Path)
+            && (File.GetAttributes(value.Path) & (FileAttributes.Hidden | FileAttributes.Temporary)) == 0),
+        "128 张图片没有通过一次回收事务安全完成替换。");
+    Require(batchWriterResults.All(value => File.ReadAllBytes(value.Path).SequenceEqual(File.ReadAllBytes(unmetOutput.FinalPath))),
+        "批量替换后的文件不是对应的完整处理结果。");
+
     // Exercise the real Shell API immediately after both JPEG render paths.
     // An exclusive read can succeed while an undisposed libvips intermediate
     // still retains the source mapping and prevents Windows from recycling it.
@@ -450,6 +512,8 @@ try
     var recycleGraySource = Path.Combine(temporaryRoot, "recycle-gray-source.ppm");
     WriteGrayPpm(recycleGraySource, 960, 1280);
     var recycleGrayJpeg = await engine.RenderAsync(recycleGraySource, ".jpg", 960, 1280, 95, false, 0, CancellationToken.None);
+    var realRecycleWriter = new ImageOutputWriter();
+    var realRecycleCases = new List<(string Name, bool TargetMinimum, FileJob Job, ExecutionResult Output, PendingImageReplacement Pending)>();
     foreach (var (name, jpeg) in new[] { ("colour", recycleColourJpeg), ("gray", recycleGrayJpeg) })
     foreach (var targetMinimum in new[] { false, true })
     {
@@ -466,12 +530,21 @@ try
         if (targetMinimum)
             Require(recycleOutput.TargetSizeNotes.Count == 1, "真实回收测试没有经过保留最小结果分支。");
         recycleJob.ApplyExecutionResult(recycleOutput);
-        var recycled = new ImageOutputWriter().Write(recycleJob, recycleOutput, recycleSaveNode);
+        var prepared = realRecycleWriter.Prepare(recycleJob, recycleOutput, recycleSaveNode);
+        Require(prepared.Completed is null && prepared.Replacement is not null,
+            "真实回收测试没有进入批量暂存阶段。");
+        realRecycleCases.Add((name, targetMinimum, recycleJob, recycleOutput, prepared.Replacement!));
+    }
+    var realRecycleResults = realRecycleWriter.CommitReplacements(realRecycleCases.Select(value => value.Pending).ToList());
+    for (var index = 0; index < realRecycleCases.Count; index++)
+    {
+        var (name, targetMinimum, recycleJob, recycleOutput, _) = realRecycleCases[index];
+        var recycled = realRecycleResults[index];
         recycleJob.ApplySavedOutput(recycleOutput, recycled, false);
         Require(recycled.Replaced && recycled.Warning is null,
             $"黑白优化后原图仍被占用（{name}，最小结果={targetMinimum}）：{recycled.Warning}");
         Require(recycleJob.OutputReady && recycleJob.SourceWasReplaced && recycleJob.EstimatedSize == recycleOutput.Size
-            && File.ReadAllBytes(recycleCopy).SequenceEqual(File.ReadAllBytes(recycleOutput.FinalPath)),
+            && File.ReadAllBytes(recycled.Path).SequenceEqual(File.ReadAllBytes(recycleOutput.FinalPath)),
             "真实回收替换没有使用实际处理结果或丢失了输出状态。");
     }
 
@@ -556,7 +629,7 @@ try
     catch (InvalidDataException) { traversalBlocked = true; }
     Require(traversalBlocked && !File.Exists(Path.Combine(temporaryRoot, "escaped.txt")), "ZIP 路径穿越没有被阻止。");
 
-    Console.WriteLine($"ENGINE_SMOKE_OK first={first.Size}B current-size={exactSize.Size}B target-size={targetSized.Size}B heic-missing-decoder=true heic-case-insensitive=true heic-original-preserved=true png-without-ffmpeg=true target-unmet-skip=true target-unmet-smallest=true target-unmet-retry=true target-unmet-legacy=true sampling=4:4:4 jpg-path-validation=true jpg-pass-through=true replacement-baseline=true recycle-sta=true recycle-after-grayscale=true recycle-abort-fallback=true smallest-output-zip=true incomplete-output-blocked=true archive-replacement-baseline=true zip-store=true zip-cleanup-safe=true zip-slip-blocked=true");
+    Console.WriteLine($"ENGINE_SMOKE_OK first={first.Size}B current-size={exactSize.Size}B target-size={targetSized.Size}B heic-missing-decoder=true heic-case-insensitive=true heic-original-preserved=true png-without-ffmpeg=true target-unmet-skip=true target-unmet-smallest=true target-unmet-retry=true target-unmet-legacy=true sampling=4:4:4 jpg-path-validation=true jpg-pass-through=true replacement-baseline=true recycle-sta=true recycle-batch=128-in-1 recycle-after-grayscale=true recycle-abort-fallback=true smallest-output-zip=true incomplete-output-blocked=true archive-replacement-baseline=true zip-store=true zip-cleanup-safe=true zip-slip-blocked=true");
 }
 finally
 {

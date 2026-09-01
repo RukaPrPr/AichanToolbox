@@ -22,11 +22,11 @@ export const useAppStore = defineStore('app', {
     routesValid: false,
     busy: false,
     workMode: '' as '' | 'estimate' | 'run' | 'preprocess',
-    workStage: '' as '' | 'preprocess' | 'images' | 'postprocess' | 'cleanup' | 'complete',
+    workStage: '' as '' | 'preprocess' | 'images' | 'replace' | 'postprocess' | 'cleanup' | 'complete',
     progress: 0,
     progressTotal: 0,
     status: '准备就绪',
-    version: '8.1.1',
+    version: '8.1.2',
     processorCount: 0
   }),
   getters: {
@@ -139,7 +139,7 @@ export const useAppStore = defineStore('app', {
       if (index >= 0) this.jobs[index] = job
       else this.jobs.push(job)
     },
-    setWorkState(value: { busy: boolean; mode: 'estimate' | 'run' | 'preprocess'; stage?: 'preprocess' | 'images' | 'postprocess' | 'cleanup' | 'complete'; total?: number; summary?: WorkSummary }) {
+    setWorkState(value: { busy: boolean; mode: 'estimate' | 'run' | 'preprocess'; stage?: 'preprocess' | 'images' | 'replace' | 'postprocess' | 'cleanup' | 'complete'; total?: number; summary?: WorkSummary }) {
       this.busy = value.busy
       this.workMode = value.busy ? value.mode : ''
       this.workStage = value.busy ? (value.stage ?? 'images') : ''
@@ -147,7 +147,7 @@ export const useAppStore = defineStore('app', {
         this.invalidateRoutes()
         this.progress = 0
         this.progressTotal = value.total ?? 0
-        this.status = value.stage === 'preprocess' ? '正在执行 ZIP 解压预处理…' : value.stage === 'postprocess' ? '正在执行 ZIP Store 打包…' : value.stage === 'cleanup' ? '正在安全删除解压文件夹…' : value.mode === 'estimate' ? '正在精确预估并缓存…' : '正在运行图片工作流…'
+        this.status = value.stage === 'preprocess' ? '正在执行 ZIP 解压预处理…' : value.stage === 'replace' ? '正在批量替换原文件…' : value.stage === 'postprocess' ? '正在执行 ZIP Store 打包…' : value.stage === 'cleanup' ? '正在安全删除解压文件夹…' : value.mode === 'estimate' ? '正在精确预估并缓存…' : '正在运行图片工作流…'
       } else if (value.summary) {
         this.routesValid = !value.summary.cancelled && value.summary.successes > 0
         this.status = value.mode === 'preprocess'

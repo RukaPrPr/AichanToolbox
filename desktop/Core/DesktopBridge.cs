@@ -12,6 +12,12 @@ namespace AichanToolbox.Core;
 
 internal sealed class DesktopBridge : IDisposable
 {
+    private sealed record PendingJobReplacement(
+        FileJob Job,
+        ExecutionResult Execution,
+        PendingImageReplacement Replacement,
+        bool CacheHit);
+
     private readonly Window _owner;
     private readonly WebView2 _browser;
     private readonly Action _beginWindowDrag;
@@ -103,7 +109,7 @@ internal sealed class DesktopBridge : IDisposable
                     ReadString(request.Payload, "background")));
                 return new { theme = _appearance.Current.Id };
             case "app.ready":
-                return new { version = "8.1.1", jobs = _jobs, archives = _archives, processorCount = Environment.ProcessorCount, maximized = _owner.WindowState == WindowState.Maximized };
+                return new { version = "8.1.2", jobs = _jobs, archives = _archives, processorCount = Environment.ProcessorCount, maximized = _owner.WindowState == WindowState.Maximized };
             case "app.frontendReady":
                 CaptureFrontendStartupMetrics(request.Payload);
                 _appReady();
@@ -421,7 +427,7 @@ internal sealed class DesktopBridge : IDisposable
         StartupTelemetry.Mark("profiles.startupSnapshot.complete");
         return new
         {
-            version = "8.1.1",
+            version = "8.1.2",
             theme = _appearance.Current.Id,
             jobs = _jobs,
             archives = _archives,
@@ -856,6 +862,7 @@ internal sealed class DesktopBridge : IDisposable
         var cacheHits = 0;
         var replaced = 0;
         var skipped = 0;
+        var pendingReplacements = new ConcurrentBag<PendingJobReplacement>();
         try
         {
             var archiveNodes = ConnectedArchiveNodes(workflow);
@@ -905,6 +912,7 @@ internal sealed class DesktopBridge : IDisposable
                 {
                     item.OutputPath = null;
                     item.EstimatedSize = null;
+                    item.FinalQuality = null;
                     item.Status = estimate ? "待预估" : "待处理";
                 }
             }
@@ -918,6 +926,7 @@ internal sealed class DesktopBridge : IDisposable
             };
             await Parallel.ForEachAsync(selected, options, async (job, token) =>
             {
+                var deferredReplacement = false;
                 try
                 {
                     job.Status = estimate ? "正在精确预估" : "正在处理";
@@ -974,18 +983,35 @@ internal sealed class DesktopBridge : IDisposable
                         else
                         {
                             var outputNode = workflow.Nodes.First(node => node.Id == result.OutputNodeId);
-                            var persisted = PersistOutput(job, result, outputNode);
-                            job.ApplySavedOutput(result, persisted, cacheHit);
-                            if (persisted.Replaced)
+                            var prepared = PrepareOutput(job, result, outputNode);
+                            if (prepared.Replacement is not null)
                             {
-                                Interlocked.Increment(ref replaced);
-                                RemoveCache(job.Id);
+                                pendingReplacements.Add(new PendingJobReplacement(
+                                    job,
+                                    result,
+                                    prepared.Replacement,
+                                    cacheHit));
+                                job.Status = "等待批量替换原文件";
+                                deferredReplacement = true;
                             }
-                            if (!cacheHit) CleanupExecution(result, null);
+                            else
+                            {
+                                var persisted = prepared.Completed!;
+                                job.ApplySavedOutput(result, persisted, cacheHit);
+                                if (persisted.Replaced)
+                                {
+                                    Interlocked.Increment(ref replaced);
+                                    RemoveCache(job.Id);
+                                }
+                                if (!cacheHit) CleanupExecution(result, null);
+                            }
                         }
                     }
-                    if (result.TargetSizeNotes.Count > 0) job.Status += " · 已保留最小结果";
-                    Interlocked.Increment(ref successes);
+                    if (!deferredReplacement)
+                    {
+                        if (result.TargetSizeNotes.Count > 0) job.Status += " · 已保留最小结果";
+                        Interlocked.Increment(ref successes);
+                    }
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { job.Status = "已取消"; }
                 catch (Exception exception)
@@ -1000,6 +1026,56 @@ internal sealed class DesktopBridge : IDisposable
                     Emit("workProgress", new { completed = done, total = selected.Count, mode = estimate ? "estimate" : "run", stage = "images", job });
                 }
             });
+
+            if (!estimate && !pendingReplacements.IsEmpty)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var replacementBatch = pendingReplacements.ToList();
+                Emit("workState", new { busy = true, mode = "run", stage = "replace", total = replacementBatch.Count });
+                var persistedBatch = _outputWriter.CommitReplacements(
+                    replacementBatch.Select(value => value.Replacement).ToList());
+                var replacementCompleted = 0;
+                for (var index = 0; index < replacementBatch.Count; index++)
+                {
+                    var pending = replacementBatch[index];
+                    try
+                    {
+                        var persisted = persistedBatch[index];
+                        pending.Job.ApplySavedOutput(pending.Execution, persisted, pending.CacheHit);
+                        _lastOutputDirectory = Path.GetDirectoryName(persisted.Path);
+                        if (persisted.Replaced)
+                        {
+                            replaced++;
+                            RemoveCache(pending.Job.Id);
+                        }
+                        if (!pending.CacheHit) CleanupExecution(pending.Execution, null);
+                        if (pending.Execution.TargetSizeNotes.Count > 0)
+                            pending.Job.Status += " · 已保留最小结果";
+                        successes++;
+                    }
+                    catch (Exception exception)
+                    {
+                        pending.Job.Status = "失败 · " + FriendlyMessage(exception);
+                        _outputWriter.Discard(pending.Replacement);
+                        if (!pending.CacheHit) CleanupExecution(pending.Execution, null);
+                        failures++;
+                    }
+                    finally
+                    {
+                        replacementCompleted++;
+                        EmitJob(pending.Job);
+                        Emit("workProgress", new
+                        {
+                            completed = replacementCompleted,
+                            total = replacementBatch.Count,
+                            mode = "run",
+                            stage = "replace",
+                            job = pending.Job
+                        });
+                    }
+                }
+            }
+
             summary.Successes = successes;
             summary.Failures = failures;
             summary.CacheHits = cacheHits;
@@ -1027,6 +1103,19 @@ internal sealed class DesktopBridge : IDisposable
         }
         finally
         {
+            foreach (var pending in pendingReplacements.Where(value => !value.Job.OutputReady))
+            {
+                _outputWriter.Discard(pending.Replacement);
+                if (!pending.CacheHit) CleanupExecution(pending.Execution, null);
+                if (pending.Job.Status == "等待批量替换原文件")
+                {
+                    pending.Job.Status = cancellationToken.IsCancellationRequested
+                        ? "已取消"
+                        : "失败 · 批量替换原文件未完成";
+                    if (!cancellationToken.IsCancellationRequested) failures++;
+                    EmitJob(pending.Job);
+                }
+            }
             summary.Successes = successes;
             summary.Failures = failures;
             summary.CacheHits = cacheHits;
@@ -1251,11 +1340,12 @@ internal sealed class DesktopBridge : IDisposable
         return replacements;
     }
 
-    private ImageOutputResult PersistOutput(FileJob job, ExecutionResult result, WorkflowNode outputNode)
+    private PreparedImageOutput PrepareOutput(FileJob job, ExecutionResult result, WorkflowNode outputNode)
     {
-        var saved = _outputWriter.Write(job, result, outputNode);
-        _lastOutputDirectory = Path.GetDirectoryName(saved.Path);
-        return saved;
+        var prepared = _outputWriter.Prepare(job, result, outputNode);
+        if (prepared.Completed is not null)
+            _lastOutputDirectory = Path.GetDirectoryName(prepared.Completed.Path);
+        return prepared;
     }
 
     private string ReserveOutput(string directory, string baseName, string extension)

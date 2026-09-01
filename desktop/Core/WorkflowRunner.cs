@@ -59,6 +59,7 @@ internal sealed class WorkflowRunner
                     Width = state.Width,
                     Height = state.Height,
                     Size = state.Size,
+                    FinalQuality = state.JpegQuality,
                     Transformed = state.Transformed,
                     RouteNodeIds = state.RouteNodeIds.ToList(),
                     RouteConnectionIds = state.RouteConnectionIds.ToList(),

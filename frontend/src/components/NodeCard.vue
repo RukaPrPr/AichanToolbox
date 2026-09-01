@@ -230,11 +230,13 @@ function descreenRangeStyle(value: number) {
           <span>{{ nodeArchives.length }} 个包</span>
         </div>
         <div class="archive-list">
-          <div v-if="!nodeArchives.length" class="archive-empty">批量选择 ZIP，每个压缩包会建立独立同名文件夹</div>
-          <div v-for="archive in nodeArchives" :key="archive.id" class="archive-row" :title="archive.sourcePath">
-            <div><strong>{{ archive.name }}</strong><small>{{ bytes(archive.size) }} · {{ archive.status }}</small></div>
-            <i><span :style="{ width: `${archive.progress}%` }" /></i>
-            <button :disabled="busy" title="移除 ZIP" @click="removeArchive(archive.id)">×</button>
+          <div class="archive-list-scroll" @wheel.stop>
+            <div v-if="!nodeArchives.length" class="archive-empty">批量选择 ZIP，每个压缩包会建立独立同名文件夹</div>
+            <div v-for="archive in nodeArchives" :key="archive.id" class="archive-row" :title="archive.sourcePath">
+              <div><strong>{{ archive.name }}</strong><small>{{ bytes(archive.size) }} · {{ archive.status }}</small></div>
+              <i><span :style="{ width: `${archive.progress}%` }" /></i>
+              <button :disabled="busy" title="移除 ZIP" @click="removeArchive(archive.id)">×</button>
+            </div>
           </div>
         </div>
         <label class="archive-field"><span>文件名编码</span><GlassSelect v-model="node.data.archiveEncoding" class="node-select archive-select" label="ZIP 文件名编码" :options="archiveEncodingOptions" :disabled="busy" /></label>
